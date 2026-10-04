@@ -1,0 +1,56 @@
+# ============================================================
+#  Gestion Immo API — Docker Compose DÉVELOPPEMENT
+#  Usage : docker compose up --build
+# ============================================================
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-gestion_imo}
+      POSTGRES_USER: ${DB_USER:-gestion_imo}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requis dans .env}
+    volumes:
+      - gestion_imo_pg_dev:/var/lib/postgresql/data
+    # Publié sur la loopback SEULEMENT : Docker contourne UFW (leçon de Widjila).
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-gestion_imo} -d ${DB_NAME:-gestion_imo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    env_file: .env
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379
+      LOG_DIR: /app/logs
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+
+volumes:
+  gestion_imo_pg_dev:

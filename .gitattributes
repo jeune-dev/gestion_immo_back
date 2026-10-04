@@ -1,0 +1,6 @@
+# Fins de ligne LF dans le dépôt ET les copies de travail : les scripts shell
+# (docker-entrypoint.sh, deploy/*.sh) cassent avec des CRLF dans un conteneur Linux.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary

@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Moindre privilège : jeton GITHUB_TOKEN en lecture seule par défaut ; chaque
+# job n'élargit que ce dont il a besoin.
+permissions:
+  contents: read
+
+# Une nouvelle poussée sur la même branche / PR annule l'exécution obsolète.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Actions épinglées par SHA de commit (le tag entre commentaires est indicatif,
+# Dependabot met à jour les deux). SHA relevés avec `git ls-remote --tags`.
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: gestion_imo_test
+          POSTGRES_USER: imo
+          POSTGRES_PASSWORD: imo_ci_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U imo -d gestion_imo_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_NAME: gestion_imo_test
+      DB_USER: imo
+      DB_PASSWORD: imo_ci_password
+      JWT_SECRET: ci-jwt-secret-uniquement-pour-les-tests-0123456789
+      JWT_REFRESH_SECRET: ci-refresh-secret-uniquement-pour-les-tests-9876543210
+      INVITATION_SECRET: ci-invitation-secret
+      APP_ENC_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      API_PUBLIC_URL: http://localhost:3000
+      APP_PUBLIC_URL: http://localhost:5173
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Vérification syntaxique
+        run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Tests unitaires, API, sécurité, PostgreSQL, concurrence et E2E (avec couverture)
+        run: npx jest --coverage --randomize
+        env:
+          JEST_WORKERS: 2
+      - name: Couverture des routes (toutes les routes de l'API doivent être appelées)
+        run: npm run test:routes
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: couverture
+          path: coverage/
+
+  # Barrière : aucune vulnérabilité connue de gravité ≥ moderate dans les
+  # dépendances de PRODUCTION.
+  audit-dependances:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Audit des dépendances de production
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Scripts shell de déploiement (syntaxe + shellcheck, niveau erreur)
+        run: |
+          for f in deploy/*.sh; do bash -n "$f"; done
+          sh -n docker-entrypoint.sh
+          shellcheck -x -S error deploy/*.sh docker-entrypoint.sh
+
+  # Recherche de secrets dans tout l'historique git.
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Compte d'organisation : licence gratuite à demander sur gitleaks.io,
+          # puis à enregistrer comme secret GITLEAKS_LICENSE.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_ENABLE_COMMENTS: false
+
+  # Construction de l'image de production puis analyse Trivy (OS + npm).
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Construction de l'image
+        run: docker build --pull -t gestion-imo-api:ci-${{ github.sha }} .
+      - name: Analyse Trivy (échec sur CRITICAL/HIGH corrigeables)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: gestion-imo-api:ci-${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          vuln-type: os,library
+          exit-code: "1"

@@ -1,0 +1,88 @@
+# ============================================================
+#  Gestion Immo API — Docker Compose PRODUCTION (VPS)
+#  Usage : docker compose -f docker-compose.prod.yml up -d --build
+#  Prérequis : .env rempli (voir .env.example), nginx + Let's Encrypt sur l'hôte.
+# ============================================================
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      # Propriétaire du schéma (migrations au démarrage SEULEMENT). L'API se
+      # connecte avec DB_USER, rôle à privilèges minimaux créé par
+      # src/scripts/rolesBase.js (constat M5 de l'audit).
+      POSTGRES_USER: ${DB_ADMIN_USER:?DB_ADMIN_USER requis dans .env}
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD requis dans .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - gestion_imo_pg:/var/lib/postgresql/data
+    expose: ["5432"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_ADMIN_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    deploy: { resources: { limits: { memory: 768M } } }
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Mot de passe obligatoire (défense en profondeur : un conteneur compromis du
+    # réseau Docker ne lit ni n'efface les compteurs). volatile-lru : seules les
+    # clés AVEC expiration sont évincées sous pression mémoire (cache) ; une
+    # clé sans TTL n'est jamais évincée. Les compteurs de limitation ont un TTL
+    # (fenêtre) : surveiller used_memory pour qu'ils ne soient pas évincés.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 128mb --maxmemory-policy volatile-lru"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD requis dans .env}
+    expose: ["6379"]
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      # REDISCLI_AUTH : le mot de passe n'apparaît pas dans la ligne de commande.
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    deploy: { resources: { limits: { memory: 160M } } }
+
+  backend:
+    build: .
+    image: gestion-imo-api:latest
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      LOG_DIR: /app/logs
+      UPLOAD_DIR: /app/uploads
+    # Seul nginx (sur l'hôte) y accède.
+    ports: ["127.0.0.1:3000:3000"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - gestion_imo_uploads:/app/uploads
+      - gestion_imo_logs:/app/logs
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+    deploy: { resources: { limits: { memory: 768M }, reservations: { memory: 128M } } }
+
+volumes:
+  gestion_imo_pg:
+  gestion_imo_uploads:
+  gestion_imo_logs:
