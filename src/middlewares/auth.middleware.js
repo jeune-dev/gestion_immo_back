@@ -55,6 +55,13 @@ const cleRoute = (req) => `${req.method} ${String(req.originalUrl || '').split('
 const routeOuverteAvantChangement = (req) => ROUTES_AVANT_CHANGEMENT.has(cleRoute(req));
 const routeOuverteAvantMfa = (req) => ROUTES_AVANT_MFA.has(cleRoute(req));
 
+/**
+ * DÉVELOPPEMENT LOCAL UNIQUEMENT : MFA_DESACTIVEE_DEV=true lève l'obligation de
+ * double authentification du super admin. Ignoré quand NODE_ENV=production.
+ */
+const mfaSuperAdminExigee = () =>
+  !(process.env.NODE_ENV !== 'production' && process.env.MFA_DESACTIVEE_DEV === 'true');
+
 const auth = async (req, res, next) => {
   try {
     const entete = req.headers.authorization;
@@ -99,7 +106,7 @@ const auth = async (req, res, next) => {
 
     // Double authentification OBLIGATOIRE pour le super admin : tant qu'elle
     // n'est pas configurée, un mot de passe seul n'ouvre pas l'administration.
-    if (utilisateur.role_code === 'super_admin' && !utilisateur.totp_enabled_at && !routeOuverteAvantMfa(req)) {
+    if (mfaSuperAdminExigee() && utilisateur.role_code === 'super_admin' && !utilisateur.totp_enabled_at && !routeOuverteAvantMfa(req)) {
       return next(new ForbiddenError(
         'Configurez la double authentification avant d’accéder à l’administration.',
         'MFA_REQUISE'

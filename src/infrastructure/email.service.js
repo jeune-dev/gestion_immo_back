@@ -35,7 +35,7 @@ const disjoncteur = new Disjoncteur('resend', {
 });
 
 const EXPEDITEUR = () => process.env.EMAIL_FROM || 'Gestion Immo <no-reply@example.com>';
-const NOM_PRODUIT = () => process.env.APP_NAME || 'Gestion Immo';
+const NOM_PRODUIT = () => process.env.APP_NAME || 'Kërimmo';
 
 function gabarit(titre, corpsHtml) {
   return `<!doctype html><html lang="fr"><body style="font-family:Arial,sans-serif;background:#f5f6f8;padding:24px;color:#1f2937">

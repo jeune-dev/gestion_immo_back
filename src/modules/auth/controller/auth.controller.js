@@ -38,7 +38,9 @@ function formatUtilisateur(user) {
     must_change_password: user.must_change_password,
     mfa_active: Boolean(user.totp_enabled_at),
     // Super admin sans double authentification : seule sa configuration est ouverte.
-    mfa_a_configurer: user.role_code === 'super_admin' && !user.totp_enabled_at,
+    mfa_a_configurer: user.role_code === 'super_admin' && !user.totp_enabled_at
+      // Développement local uniquement (voir MFA_DESACTIVEE_DEV dans auth.middleware.js).
+      && !(process.env.NODE_ENV !== 'production' && process.env.MFA_DESACTIVEE_DEV === 'true'),
   };
 }
 

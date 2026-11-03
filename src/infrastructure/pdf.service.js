@@ -24,7 +24,7 @@ function generer(dessiner, meta = {}) {
     const doc = new PDFDocument({
       size: 'A4',
       margins: { top: 50, bottom: 60, left: 50, right: 50 },
-      info: { Title: meta.titre || 'Document', Author: meta.auteur || (process.env.APP_NAME || 'Gestion Immo'), Producer: 'pdfkit' },
+      info: { Title: meta.titre || 'Document', Author: meta.auteur || (process.env.APP_NAME || 'Kërimmo'), Producer: 'pdfkit' },
       bufferPages: true,
     });
     const morceaux = [];

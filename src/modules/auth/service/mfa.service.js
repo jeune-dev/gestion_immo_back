@@ -31,7 +31,7 @@ const { alerter, TYPES } = require('../../../infrastructure/alertes.service.js')
 
 const DUREE_JETON_MFA = '5m';
 const NB_CODES_SECOURS = 10;
-const EMETTEUR = () => process.env.APP_NAME || 'Gestion immobilière';
+const EMETTEUR = () => process.env.APP_NAME || 'Kërimmo';
 
 // Clé DÉRIVÉE : un jeton « mfa » ne peut jamais être confondu avec un jeton
 // d'accès, même si la vérification du type était oubliée ailleurs.
