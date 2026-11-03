@@ -28,9 +28,21 @@ RUN npm ci --omit=dev --no-fund --ignore-scripts \
 # ── Étape 2 : image finale ───────────────────────────────────────────────────
 FROM node:26.13.0-slim AS runner
 # Polices pour les PDF (pdfkit). Pas de curl : le HEALTHCHECK utilise fetch de Node.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+#
+# `upgrade` avant l'installation : le job `image` de la CI fait échouer la
+# construction sur toute CVE système CORRIGEABLE (Trivy, ignore-unfixed). Or
+# l'image de base est épinglée et Dependabot ne la relève qu'une fois par
+# semaine : entre deux relèvements, un correctif Debian publié suffit à mettre
+# le pipeline au rouge — c'est arrivé sur perl-base, pcre2 et une dizaine
+# d'autres paquets, sans qu'une ligne du projet ait bougé.
+#
+# L'image perd en reproductibilité stricte à l'octet près, et c'est le bon
+# échange : un conteneur de production qui tourne avec des paquets système
+# corrigés vaut mieux qu'une image identique au mois dernier.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
         fonts-dejavu-core ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 # Gestionnaires de paquets inutiles à l'exécution (l'entrypoint appelle
 # node_modules/.bin directement) : moins de surface d'attaque et moins de CVE
 # remontées par Trivy (dépendances embarquées de npm).
