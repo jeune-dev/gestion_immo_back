@@ -123,3 +123,210 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           exit-code: "1"
+
+  # ── Déploiement sur le VPS ──────────────────────────────────────────────────
+  # Ne démarre que si TOUTES les barrières ci-dessus sont vertes : tests et
+  # couverture des routes, audit des dépendances de production, recherche de
+  # secrets dans l'historique, et analyse Trivy de l'image. Un commit qui
+  # échoue sur l'une d'elles n'atteint jamais le serveur.
+  #
+  # Le déploiement est placé ici plutôt que dans un workflow séparé pour ne pas
+  # rejouer ces barrières une seconde fois : la suite avec couverture et la
+  # construction de l'image coûtent déjà plusieurs minutes.
+  #
+  # Secrets à configurer UNE FOIS dans ce dépôt
+  # (Settings → Secrets and variables → Actions) :
+  #   VPS_HOST     adresse du serveur (IP ou nom de domaine)
+  #   VPS_USER     utilisateur SSH
+  #   VPS_SSH_KEY  clé privée SSH, dont la publique est dans
+  #                ~/.ssh/authorized_keys de cet utilisateur sur le VPS
+  deploiement:
+    needs: [tests, audit-dependances, secrets, image]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+
+    # Le `concurrency` du workflow annule l'exécution obsolète
+    # (cancel-in-progress: true) — bon pour des tests, dangereux pour un
+    # déploiement : couper un `docker compose up --build` en cours laisserait
+    # le conteneur à moitié recréé. Ce job a donc sa propre file, sans
+    # annulation : deux poussées rapprochées déploient l'une après l'autre.
+    concurrency:
+      group: deploiement-kerimmo
+      cancel-in-progress: false
+
+    steps:
+      - name: Déployer par SSH
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          # La construction de l'image (apt, npm ci, npm rebuild bcrypt)
+          # dépasse les 10 minutes par défaut de l'action, ce qui couperait la
+          # connexion SSH avant la fin — un échec signalé alors que l'image
+          # finit de se construire.
+          command_timeout: "30m"
+          script: |
+            set -e
+
+            APP_DIR="/var/www/kerimmo-api"
+            COMPOSE="docker compose -f docker-compose.prod.yml"
+            DOMAINE="api.kerimmo.kodafrik.com"
+            SITE="kerimmo-api"
+
+            # Le dépôt est cloné une première fois à la main, avec son .env
+            # rempli. Ce workflow ne fait que le mettre à jour : cloner ici
+            # masquerait une erreur de chemin derrière un déploiement en
+            # apparence réussi.
+            if [ ! -d "${APP_DIR}/.git" ]; then
+              echo "ERREUR : ${APP_DIR} n'est pas un dépôt git." >&2
+              echo "Premier déploiement : 'git clone <url> ${APP_DIR}' une fois, à la main." >&2
+              exit 1
+            fi
+
+            cd "${APP_DIR}"
+
+            # .env n'est jamais commité : il porte les secrets JWT, les deux
+            # jeux d'identifiants PostgreSQL, le mot de passe Redis et la clé
+            # de chiffrement au repos. Sans lui, `up` échoue sur les `${VAR:?}`
+            # du compose — autant le dire ici, avec la marche à suivre.
+            if [ ! -f ".env" ]; then
+              echo "ERREUR : ${APP_DIR}/.env manquant — copier .env.example et le remplir." >&2
+              echo "Les secrets se génèrent avec : npm run secrets:generer" >&2
+              exit 1
+            fi
+
+            # Un `git pull` refuse de tourner sur un arbre sale. Le cas le plus
+            # courant n'est pas une édition : un `chmod +x` sur un script de
+            # deploy/ suffit, git suivant le bit d'exécution. On le dit, avec
+            # la marche à suivre, plutôt que d'écraser en silence un travail
+            # laissé sur le serveur.
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "ERREUR : modifications non commitées dans ${APP_DIR} :" >&2
+              git status --short >&2
+              echo "" >&2
+              echo "Pour les abandonner : git -C ${APP_DIR} checkout -- ." >&2
+              echo "Si ce sont des changements de permissions seulement :" >&2
+              echo "  git -C ${APP_DIR} config core.fileMode false" >&2
+              exit 1
+            fi
+
+            git pull --rebase origin main
+
+            # Sauvegarde AVANT de toucher au schéma : l'entrypoint applique les
+            # migrations au démarrage du conteneur, et une migration ne se
+            # défait pas toujours. Un échec de sauvegarde avertit sans bloquer
+            # — refuser de déployer un correctif urgent parce que la sauvegarde
+            # a échoué serait pire.
+            bash deploy/backup-postgres.sh || echo "AVERTISSEMENT : sauvegarde préalable impossible."
+
+            # Seul le backend est reconstruit : PostgreSQL, Redis et leurs
+            # volumes restent intacts.
+            #
+            # Les migrations ne sont pas lancées ici : docker-entrypoint.sh
+            # attend la base, applique les migrations avec le PROPRIÉTAIRE du
+            # schéma, rejoue les données de référence, puis démarre l'API avec
+            # le rôle à privilèges minimaux. Une migration en échec empêche le
+            # conteneur de démarrer, au lieu de laisser l'API servir du trafic
+            # sur un schéma périmé.
+            ${COMPOSE} up -d --build --remove-orphans backend
+
+            # On sonde l'état réel du conteneur plutôt qu'un délai fixe : le
+            # HEALTHCHECK a 40 s de start-period et les migrations peuvent
+            # durer. 60 tentatives × 5 s = 5 minutes.
+            echo "Attente du démarrage (migrations et données de référence incluses)…"
+            etat="absent"
+            for i in $(seq 1 60); do
+              cid="$(${COMPOSE} ps -q backend 2>/dev/null || true)"
+              if [ -z "$cid" ]; then
+                echo "Le conteneur n'est plus lancé — journaux :"
+                ${COMPOSE} logs --tail=80 backend
+                exit 1
+              fi
+              etat="$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo absent)"
+              [ "$etat" = "healthy" ] && break
+              sleep 5
+            done
+
+            if [ "$etat" != "healthy" ]; then
+              echo "Conteneur non healthy après 300 s — journaux :"
+              ${COMPOSE} logs --tail=80 backend
+              exit 1
+            fi
+
+            # Le port publié sur l'hôte est réglable (HOST_PORT) : le lire
+            # plutôt que le supposer, sinon la sonde interroge l'application du
+            # voisin sur un serveur qui en héberge plusieurs.
+            PORT_HOTE="$(grep -E '^HOST_PORT=' .env | tail -1 | cut -d= -f2 | tr -dc '0-9')"
+            PORT_HOTE="${PORT_HOTE:-3000}"
+
+            echo "Contrôle local sur 127.0.0.1:${PORT_HOTE}…"
+            curl -fsS "http://127.0.0.1:${PORT_HOTE}/health" >/dev/null
+            echo "API en ligne."
+
+            # ── Configuration nginx ─────────────────────────────────────────
+            # Posée ici pour qu'une modification de deploy/nginx.conf prenne
+            # effet sans intervention manuelle : sans cette étape, le fichier
+            # arrive bien par le `git pull` ci-dessus, mais nginx ne lit que
+            # /etc/nginx — un correctif resterait invisible en production
+            # alors que le déploiement passerait au vert.
+            #
+            # Le danger est réel : ce serveur sert plusieurs domaines, et une
+            # configuration invalide empêche de recharger TOUS les sites de la
+            # machine, renouvellement des certificats compris. D'où la
+            # sauvegarde, le test, et la restauration AVANT d'échouer — nginx
+            # n'est jamais rechargé avec une configuration qui n'a pas passé
+            # `nginx -t`.
+            DISPO="/etc/nginx/sites-available/${SITE}"
+            SAUVE="/root/${SITE}.nginx.avant-deploiement"
+
+            if [ ! -f "/etc/letsencrypt/live/${DOMAINE}/fullchain.pem" ]; then
+              # deploy/nginx.conf référence les certificats : les poser avant
+              # Certbot ferait échouer `nginx -t`. Le premier passage se fait
+              # à la main avec deploy/nginx-http.conf (voir son en-tête).
+              echo "Certificat absent pour ${DOMAINE} — configuration nginx laissée telle quelle."
+              echo "Premier déploiement : poser deploy/nginx-http.conf puis lancer certbot."
+            else
+              [ -f "${DISPO}" ] && cp "${DISPO}" "${SAUVE}"
+
+              # Le fragment de proxy d'abord : nginx.conf l'inclut, et son
+              # absence ferait échouer le test.
+              mkdir -p /etc/nginx/snippets
+              cp "${APP_DIR}/deploy/nginx-proxy.conf" /etc/nginx/snippets/gestion-imo-proxy.conf
+
+              cp "${APP_DIR}/deploy/nginx.conf" "${DISPO}"
+              sed -i "s/api\.exemple\.sn/${DOMAINE}/g" "${DISPO}"
+              sed -i "s|server 127\.0\.0\.1:3000;|server 127.0.0.1:${PORT_HOTE};|" "${DISPO}"
+              ln -sf "${DISPO}" "/etc/nginx/sites-enabled/${SITE}"
+
+              if nginx -t; then
+                systemctl reload nginx
+                echo "Configuration nginx à jour et rechargée."
+              else
+                echo "ERREUR : nginx -t a échoué avec la nouvelle configuration." >&2
+                if [ -f "${SAUVE}" ]; then
+                  cp "${SAUVE}" "${DISPO}"
+                  echo "Configuration précédente restaurée." >&2
+                else
+                  rm -f "/etc/nginx/sites-enabled/${SITE}"
+                  echo "Site désactivé (aucune version précédente à restaurer)." >&2
+                fi
+                nginx -t
+                exit 1
+              fi
+            fi
+
+            echo "Déploiement terminé."
+
+      - name: Vérifier l'API publique
+        # Contrôle de bout en bout : DNS, nginx, certificat, puis application.
+        # Le contrôle précédent tournait sur le serveur, en loopback — il ne
+        # dit rien de ce que voient les clients.
+        run: |
+          set -e
+          url="https://api.kerimmo.kodafrik.com/health"
+          code=$(curl -sS -m 30 -o /dev/null -w '%{http_code}' "$url")
+          echo "$url -> $code"
+          [ "$code" = "200" ] || { echo "::error::l'API publique répond $code"; exit 1; }
+          echo "API publique vérifiée."

@@ -4,7 +4,7 @@
 #  constat d'audit M7). Procédure complète : docs/EXPLOITATION.md.
 #
 #  Cron (voir docs/EXPLOITATION.md) :
-#    15 2 * * * /opt/gestion-imo/back/deploy/backup-postgres.sh >> /var/log/gestion-imo/backup.log 2>&1
+#    15 2 * * * /var/www/kerimmo-api/deploy/backup-postgres.sh >> /var/log/gestion-imo/backup.log 2>&1
 #
 #  Produit, dans BACKUP_DIR (défaut : ./backups) :
 #    <DB_NAME>_db_<horodatage>.dump.age        pg_dump -Fc chiffré (age)

@@ -14,7 +14,7 @@ apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docke
 ufw default deny incoming && ufw default allow outgoing
 ufw allow OpenSSH && ufw allow 'Nginx Full' && ufw --force enable
 systemctl enable --now fail2ban
-echo "Étapes suivantes (détail : docs/EXPLOITATION.md) : cloner le dépôt dans /opt/gestion-imo,"
+echo "Étapes suivantes (détail : docs/EXPLOITATION.md) : cloner le dépôt dans /var/www/kerimmo-api,"
 echo "créer back/.env depuis .env.example (chmod 600), copier deploy/nginx.conf dans"
 echo "/etc/nginx/sites-available/ et deploy/nginx-proxy.conf dans /etc/nginx/snippets/gestion-imo-proxy.conf,"
 echo "certbot certonly --nginx, configurer rclone + BACKUP_AGE_RECIPIENT, installer la crontab, puis deploy/deploy.sh."

@@ -71,7 +71,15 @@ services:
       LOG_DIR: /app/logs
       UPLOAD_DIR: /app/uploads
     # Seul nginx (sur l'hôte) y accède.
-    ports: ["127.0.0.1:3000:3000"]
+    #
+    # Le port hôte est réglable par `HOST_PORT` (.env) parce qu'un VPS héberge
+    # souvent plusieurs API : figé, `up` échoue sur « port is already
+    # allocated » dès qu'une autre application occupe 3000, et modifier ce
+    # fichier à la main fait ensuite échouer le `git pull` du déploiement. Le
+    # port INTERNE reste 3000 — chaque conteneur a son propre espace réseau,
+    # deux applications peuvent y écouter sur 3000 sans se gêner. Penser à
+    # aligner l'`upstream` de deploy/nginx.conf sur la même valeur.
+    ports: ["127.0.0.1:${HOST_PORT:-3000}:3000"]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
