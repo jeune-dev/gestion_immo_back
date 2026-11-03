@@ -2,6 +2,7 @@
 
 const {
   api, bearer, MOT_DE_PASSE, telephoneUnique, emailUnique, pngTest, publierModeleBail, compter, fermer, sequelize,
+  reperes,
 } = require('../../setup/helpers.js');
 
 /**
@@ -18,6 +19,10 @@ describe('E2E — mise en location complète', () => {
   afterAll(fermer);
 
   test('parcours nominal du propriétaire et du locataire', async () => {
+    // Bail calé sur le jour courant (`reperes`) : la première échéance est
+    // toujours échue et la deuxième à venir, quel que soit le jour.
+    const r = reperes();
+
     // 1. Inscription puis connexion par téléphone (format national).
     const tel = telephoneUnique();
     const email = emailUnique('balla');
@@ -62,7 +67,7 @@ describe('E2E — mise en location complète', () => {
 
     // 5. Bail en brouillon ; activation refusée sans état des lieux d'entrée (§ 52.4).
     const bail = (await api().post('/api/v1/baux').set(h).send({
-      apartment_id: appartements[0].id, tenant_id: locataire.tenant.id, start_date: '2026-10-01', deposit_amount: 700000, due_day: 5,
+      apartment_id: appartements[0].id, tenant_id: locataire.tenant.id, start_date: r.debut, deposit_amount: 700000, due_day: r.jourEcheance,
     })).body.data.lease;
     expect(bail).toMatchObject({ status: 'brouillon', rent_amount: 350000, reference: expect.stringMatching(/^BAIL-\d{4}-\d{4}$/) });
     expect((await api().post(`/api/v1/baux/${bail.id}/activer`).set(h)).body.error.code).toBe('ETAT_DES_LIEUX_ENTREE_REQUIS');
@@ -95,8 +100,8 @@ describe('E2E — mise en location complète', () => {
     expect(actif.status).toBe(200);
     expect(actif.body.data.avertissements).toEqual([]);
     const echeances = (await api().get(`/api/v1/echeances?lease_id=${bail.id}&tri=due_date`).set(h)).body.data;
-    expect(echeances.pagination.total).toBe(13);
-    expect(echeances.items[0]).toMatchObject({ label: 'Loyer octobre 2026', due_date: '2026-10-05', amount_due: 350000 });
+    expect(echeances.pagination.total).toBe(r.nbEcheances);
+    expect(echeances.items[0]).toMatchObject({ label: r.p0.libelle, due_date: r.p0.echeance, amount_due: 350000 });
     expect(await compter('deposits', "lease_id = :l AND status = 'attendue' AND amount_expected = 700000", { l: bail.id })).toBe(1);
 
     // 9. Contrat OHADA généré depuis le modèle publié, partagé et visible du locataire.
@@ -111,10 +116,10 @@ describe('E2E — mise en location complète', () => {
     const accueil = (await api().get('/api/v1/locataire/accueil').set(hl)).body.data.homes;
     expect(accueil).toHaveLength(1);
     expect(accueil[0].lease.apartment.number).toBe('A07');
-    expect(accueil[0].next_schedule.label).toBe('Loyer octobre 2026');
+    expect(accueil[0].next_schedule.label).toBe(r.p0.libelle);
 
     // 11. Tableau de bord du propriétaire (§ 6).
-    const tableau = (await api().get('/api/v1/dashboard?mois=2026-10').set(h)).body.data.dashboard;
+    const tableau = (await api().get(`/api/v1/dashboard?mois=${r.p0.debut.slice(0, 7)}`).set(h)).body.data.dashboard;
     expect(tableau.patrimoine).toMatchObject({ immeubles: 1, appartements: 3, occupes: 1, disponibles: 2 });
     expect(tableau.loyers.a_recevoir).toBe(350000);
 

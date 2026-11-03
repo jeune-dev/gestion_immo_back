@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const {
   api, nouveauProprietaire, bailActif, fermer, sequelize, compter, pngTest,
-  desactiverEdlObligatoire, creerImmeuble, creerAppartement, creerLocataire,
+  desactiverEdlObligatoire, creerImmeuble, creerAppartement, creerLocataire, reperes, bailRelatif,
 } = require('../../../setup/helpers.js');
 const {
   UUID_ABSENT, simulerFournisseurs, preparerPaydunya, preparerPreuve, deposerPreuve, initier, ipn, enFormulaire, idTransaction,
@@ -447,7 +447,10 @@ describe('Transactions et rapprochements — espace propriétaire', () => {
   });
 
   test('§ 51.3 rapprochement par montant + numéro payeur quand la référence manque', async () => {
-    const { p, providerId, tenant, echeances } = await preparerPaydunya();
+    // Le rapprochement par montant exige UNE seule échéance payable du bon
+    // montant : avec un bail relatif (`reperes`), seule l'échéance échue `p0`
+    // est en retard, la suivante est encore « à venir ».
+    const { p, providerId, tenant, echeances } = await preparerPaydunya({ bail: bailRelatif(reperes()) });
     const res = await webhook(providerId, ipn(`SANS-REF-${crypto.randomBytes(3).toString('hex')}`, 350000, 'completed', { telephone: tenant.phone.replace('+', '') }));
     expect(res.status).toBe(200);
     expect(res.body.data.rapproche_par).toBe('montant_telephone');

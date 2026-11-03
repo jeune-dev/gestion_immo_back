@@ -11,6 +11,69 @@ const sequelize = require('../../config/db.js');
 const bcrypt = require('../../utils/motDePasse.js');
 const totp = require('../../utils/totp.js');
 const { encrypt } = require('../../utils/cryptoField.js');
+const {
+  aujourdhui, ajouterJours, ajouterMois, avecJour, debutMois, finMois, libelleMois,
+} = require('../../utils/dates.js');
+
+/**
+ * Repères calendaires RELATIFS au jour où la suite tourne.
+ *
+ * Les jeux de données de cette suite sont ancrés sur des dates absolues
+ * (bail au 1er septembre 2026, échéance le 5). C'est lisible, et c'est exact
+ * tant qu'« aujourd'hui » tombe dans la bonne fenêtre : la première échéance
+ * doit être passée, la deuxième encore à venir. Au 1er novembre les deux
+ * étaient passées — six fichiers ont échoué d'un coup, sans qu'une ligne de
+ * code ait bougé.
+ *
+ * Ces repères donnent un bail dont la DEUXIÈME échéance tombe toujours dans
+ * sept à vingt-huit jours, quel que soit le jour où la suite tourne :
+ *
+ *   p0   période révolue     échéance passée          → `en_retard`
+ *   p1   période en cours    échéance à plus de 5 j   → `a_venir`
+ *
+ * `schedule_notice_days` vaut 5 et `late_grace_days` 0 (config/parametres.js) :
+ * au-delà de cinq jours l'échéance est « à venir », en dessous « à payer », et
+ * dès le lendemain de sa date elle est « en retard ».
+ *
+ * Le jour d'échéance est maintenu entre le 7 et le 25 : plus tôt ou plus tard,
+ * un mois court (février) décalerait l'échéance et changerait le nombre de
+ * jours de retard.
+ */
+function reperes(jour = aujourdhui()) {
+  let decalage = 10;
+  for (let i = 0; i < 40; i += 1) {
+    const j = Number(ajouterJours(jour, decalage).slice(8, 10));
+    if (j >= 7 && j <= 25) break;
+    decalage += 1;
+  }
+  const echeanceP1 = ajouterJours(jour, decalage);
+  const jourEcheance = Number(echeanceP1.slice(8, 10));
+  const debutP1 = debutMois(echeanceP1);
+  const debutP0 = ajouterMois(debutP1, -1);
+
+  const periode = (debut) => ({
+    debut,
+    fin: finMois(debut),
+    echeance: avecJour(debut, jourEcheance),
+    libelle: `Loyer ${libelleMois(debut)}`,
+  });
+
+  // Nombre d'échéances mensuelles générées à l'activation d'un tel bail :
+  // toutes les périodes de `p0` jusqu'à l'horizon (12 mois après aujourd'hui,
+  // cf. ECHEANCES_HORIZON_MOIS). 13 ou 14 selon le jour du mois.
+  const limite = ajouterMois(jour, 12);
+  let nbEcheances = 0;
+  for (let debut = debutP0; debut <= limite; debut = ajouterMois(debut, 1)) nbEcheances += 1;
+
+  return {
+    jour, debut: debutP0, jourEcheance, nbEcheances, p0: periode(debutP0), p1: periode(debutP1),
+  };
+}
+
+/** Bail relatif au jour courant, à passer en `bail` de `bailActif`. */
+function bailRelatif(r = reperes()) {
+  return { start_date: r.debut, due_day: r.jourEcheance };
+}
 
 /**
  * Routes de mouvement d'argent qui EXIGENT une Idempotency-Key (comme le
@@ -220,6 +283,6 @@ async function fermer() {
 module.exports = {
   api, apiBrute, bearer, MOT_DE_PASSE, telephoneUnique, emailUnique,
   nouveauProprietaire, superAdmin, codeTotp, creerImmeuble, creerAppartement, creerLocataire,
-  desactiverEdlObligatoire, bailActif, activerLocataire, fermer, sequelize,
+  desactiverEdlObligatoire, bailActif, activerLocataire, fermer, sequelize, reperes, bailRelatif,
   echeancesDu, payerEspeces, pngTest, proprietaireEtLocataire, expirerAbonnement, publierModeleBail, compter,
 };

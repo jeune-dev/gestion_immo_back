@@ -2,6 +2,7 @@
 
 const {
   api, nouveauProprietaire, bailActif, activerLocataire, proprietaireEtLocataire, fermer, sequelize, compter, payerEspeces,
+  reperes, bailRelatif,
 } = require('../../../setup/helpers.js');
 const {
   UUID_ABSENT, simulerFournisseurs, preparerPaydunya, initier, ipn, enFormulaire, echeancesDu, ligne,
@@ -73,19 +74,24 @@ describe('Échéances', () => {
   describe('GET /echeances', () => {
     test('§ 10 génération : 12 mois d’horizon, montants, libellés, échéance au jour convenu ; § 11 statuts initiaux', async () => {
       const p = await nouveauProprietaire();
-      const { lease, tenant, apartment, building } = await bailActif(p);
+      // Bail calé sur le jour courant (`reperes`) : la première période est
+      // toujours échue, la deuxième toujours à venir, quel que soit le jour.
+      const r = reperes();
+      const { lease, tenant, apartment, building } = await bailActif(p, { bail: bailRelatif(r) });
       const res = await api().get(`/api/v1/echeances?lease_id=${lease.id}&tri=due_date&limit=100`).set(p.h);
       expect(res.status).toBe(200);
       const items = res.body.data.items;
       expect(items.length).toBe(res.body.data.pagination.total);
       expect(items.length).toBeGreaterThanOrEqual(12);
       expect(items[0]).toMatchObject({
-        period_start: '2026-09-01', period_end: '2026-09-30', due_date: '2026-09-05', rent_amount: 350000, charges_amount: 0,
-        amount_due: 350000, amount_paid: 0, label: 'Loyer septembre 2026', status: 'en_retard',
+        period_start: r.p0.debut, period_end: r.p0.fin, due_date: r.p0.echeance, rent_amount: 350000, charges_amount: 0,
+        amount_due: 350000, amount_paid: 0, label: r.p0.libelle, status: 'en_retard',
         tenant: { id: tenant.id }, apartment: { id: apartment.id, building: { id: building.id } },
       });
-      expect(items[1]).toMatchObject({ period_start: '2026-10-01', due_date: '2026-10-05' });
-      expect(['a_venir', 'a_payer']).toContain(items[1].status);
+      expect(items[1]).toMatchObject({ period_start: r.p1.debut, due_date: r.p1.echeance, label: r.p1.libelle });
+      // Échéance à plus de `schedule_notice_days` (5) : « à venir », pas encore
+      // « à payer » — les repères garantissent au moins neuf jours de marge.
+      expect(items[1].status).toBe('a_venir');
       expect(items.every((e) => e.amount_due === 350000)).toBe(true);
     });
 
@@ -106,23 +112,27 @@ describe('Échéances', () => {
 
     test('filtres : bail, locataire, appartement, immeuble, statut, impayés, période ; tris', async () => {
       const p = await nouveauProprietaire();
-      const a = await bailActif(p);
-      const b = await bailActif(p, { appartement: { rent_amount: 100000 } });
-      const [septA, octA] = await echeancesDu(p, a.lease.id);
-      await payerEspeces(p, a.lease.id, 350000, { scheduleId: septA.id });
-      await payerEspeces(p, a.lease.id, 100000, { scheduleId: octA.id });
+      // Une seule échéance échue par bail, et elle tombe dans le mois `p0` :
+      // les filtres « impayés » et « période » restent exacts tous les jours.
+      const r = reperes();
+      const a = await bailActif(p, { bail: bailRelatif(r) });
+      const b = await bailActif(p, { bail: bailRelatif(r), appartement: { rent_amount: 100000 } });
+      const [echueA, suivanteA] = await echeancesDu(p, a.lease.id);
+      await payerEspeces(p, a.lease.id, 350000, { scheduleId: echueA.id, paidOn: r.p0.echeance });
+      await payerEspeces(p, a.lease.id, 100000, { scheduleId: suivanteA.id, paidOn: r.p0.echeance });
       const q = async (qs) => (await api().get(`/api/v1/echeances?limit=100&${qs}`).set(p.h)).body.data.items;
       expect((await q(`lease_id=${b.lease.id}`)).every((e) => e.lease_id === b.lease.id)).toBe(true);
       expect((await q(`tenant_id=${a.tenant.id}`)).every((e) => e.tenant_id === a.tenant.id)).toBe(true);
       expect((await q(`apartment_id=${b.apartment.id}`)).every((e) => e.apartment_id === b.apartment.id)).toBe(true);
       expect((await q(`building_id=${a.building.id}`)).every((e) => e.lease_id === a.lease.id)).toBe(true);
-      expect((await q('status=paye')).map((e) => e.id)).toEqual([septA.id]);
-      expect((await q('status=partiellement_paye')).map((e) => e.id)).toEqual([octA.id]);
+      expect((await q('status=paye')).map((e) => e.id)).toEqual([echueA.id]);
+      expect((await q('status=partiellement_paye')).map((e) => e.id)).toEqual([suivanteA.id]);
       // § 48 « Qui n'a pas payé ? » : en retard ou partiellement payées.
       const impayes = await q('impayes=true');
-      expect(impayes.map((e) => e.id).sort()).toEqual([octA.id, (await echeancesDu(p, b.lease.id))[0].id].sort());
-      expect((await q('du=2026-10-01&au=2026-10-31')).every((e) => e.due_date >= '2026-10-01' && e.due_date <= '2026-10-31')).toBe(true);
-      expect((await q('du=2026-10-01&au=2026-10-31'))).toHaveLength(2);
+      expect(impayes.map((e) => e.id).sort()).toEqual([suivanteA.id, (await echeancesDu(p, b.lease.id))[0].id].sort());
+      const periode = `du=${r.p0.debut}&au=${r.p0.fin}`;
+      expect((await q(periode)).every((e) => e.due_date >= r.p0.debut && e.due_date <= r.p0.fin)).toBe(true);
+      expect((await q(periode))).toHaveLength(2);
       const parMontant = await q('tri=amount_due');
       expect(parMontant[0].amount_due).toBe(100000);
       expect((await q('tri=-amount_due'))[0].amount_due).toBe(350000);
@@ -268,14 +278,17 @@ describe('Échéances', () => {
 
     test('§ 11 transitions : à payer/en retard → partiellement payé → payé ; remboursement → rouvert', async () => {
       const p = await nouveauProprietaire();
-      const { lease } = await bailActif(p);
-      const [, oct] = await echeancesDu(p, lease.id);
-      await payerEspeces(p, lease.id, 100000, { scheduleId: oct.id });
-      expect((await ligne('SELECT status FROM rent_schedules WHERE id = :id', { id: oct.id })).status).toBe('partiellement_paye');
-      const solde = await payerEspeces(p, lease.id, 250000, { scheduleId: oct.id });
-      expect((await ligne('SELECT status FROM rent_schedules WHERE id = :id', { id: oct.id })).status).toBe('paye');
+      // Échéance NON échue : « en retard » est prioritaire sur « partiellement
+      // payé » (statutA), donc la transition ne s'observe que sur `p1`.
+      const r = reperes();
+      const { lease } = await bailActif(p, { bail: bailRelatif(r) });
+      const [, suivante] = await echeancesDu(p, lease.id);
+      await payerEspeces(p, lease.id, 100000, { scheduleId: suivante.id, paidOn: r.jour });
+      expect((await ligne('SELECT status FROM rent_schedules WHERE id = :id', { id: suivante.id })).status).toBe('partiellement_paye');
+      const solde = await payerEspeces(p, lease.id, 250000, { scheduleId: suivante.id, paidOn: r.jour });
+      expect((await ligne('SELECT status FROM rent_schedules WHERE id = :id', { id: suivante.id })).status).toBe('paye');
       await api().post(`/api/v1/paiements/${solde.payment.id}/rembourser`).set(p.h).send({ reason: 'Erreur' });
-      expect(await ligne('SELECT status, amount_paid FROM rent_schedules WHERE id = :id', { id: oct.id })).toEqual({ status: 'partiellement_paye', amount_paid: 100000 });
+      expect(await ligne('SELECT status, amount_paid FROM rent_schedules WHERE id = :id', { id: suivante.id })).toEqual({ status: 'partiellement_paye', amount_paid: 100000 });
     });
   });
 
@@ -311,16 +324,19 @@ describe('Échéances', () => {
     });
 
     test('filtres locataire : à payer, statut, période, ordre ; pagination ; paramètres invalides → 422', async () => {
-      const { proprio: p, locataire: loc, lease } = await proprietaireEtLocataire();
-      const [sept] = await echeancesDu(p, lease.id);
+      // Bail relatif : `echue` est la SEULE échéance à payer et en retard, et
+      // la seule du mois `p0` — les trois filtres ne renvoient donc qu'elle.
+      const r = reperes();
+      const { proprio: p, locataire: loc, lease } = await proprietaireEtLocataire({ bail: bailRelatif(r) });
+      const [echue] = await echeancesDu(p, lease.id);
       const q = async (qs) => (await api().get(`/api/v1/locataire/echeances?limit=100&${qs}`).set(loc.h)).body.data;
-      expect((await q('a_payer=true')).items.map((e) => e.id)).toEqual([sept.id]);
-      expect((await q('status=en_retard')).items.map((e) => e.id)).toEqual([sept.id]);
-      expect((await q('du=2026-09-01&au=2026-09-30')).items.map((e) => e.id)).toEqual([sept.id]);
+      expect((await q('a_payer=true')).items.map((e) => e.id)).toEqual([echue.id]);
+      expect((await q('status=en_retard')).items.map((e) => e.id)).toEqual([echue.id]);
+      expect((await q(`du=${r.p0.debut}&au=${r.p0.fin}`)).items.map((e) => e.id)).toEqual([echue.id]);
       const asc = (await q('ordre=asc')).items;
-      expect(asc[0].id).toBe(sept.id);
+      expect(asc[0].id).toBe(echue.id);
       const desc = (await q('')).items;
-      expect(desc[desc.length - 1].id).toBe(sept.id);
+      expect(desc[desc.length - 1].id).toBe(echue.id);
       expect((await q(`lease_id=${lease.id}`)).pagination.total).toBe(desc.length);
       const p1 = await api().get('/api/v1/locataire/echeances?limit=2').set(loc.h);
       expect(p1.body.data.pagination).toEqual({ page: 1, limit: 2, total: desc.length, totalPages: Math.ceil(desc.length / 2) });
