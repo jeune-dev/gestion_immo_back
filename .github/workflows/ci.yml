@@ -323,9 +323,14 @@ jobs:
         # Contrôle de bout en bout : DNS, nginx, certificat, puis application.
         # Le contrôle précédent tournait sur le serveur, en loopback — il ne
         # dit rien de ce que voient les clients.
+        #
+        # `/health/live` et non `/health` : deploy/nginx.conf réserve `/health`
+        # et `/health/ready` à 127.0.0.1, parce qu'elles révèlent l'état de la
+        # base, du stockage et de Redis. Depuis un runner GitHub, `/health`
+        # répond 403 — ce job echouait donc a chaque deploiement reussi.
         run: |
           set -e
-          url="https://api.kerimmo.kodafrik.com/health"
+          url="https://api.kerimmo.kodafrik.com/health/live"
           code=$(curl -sS -m 30 -o /dev/null -w '%{http_code}' "$url")
           echo "$url -> $code"
           [ "$code" = "200" ] || { echo "::error::l'API publique répond $code"; exit 1; }
