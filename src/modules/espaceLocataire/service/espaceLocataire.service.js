@@ -22,7 +22,7 @@ const { ForbiddenError } = require('../../../errors/AppError.js');
 const INCLUDE_LOGEMENT = [
   {
     model: Apartment, as: 'apartment', attributes: ['id', 'number', 'floor', 'type', 'surface', 'rooms_count', 'is_furnished'], paranoid: false,
-    include: [{ model: Building, as: 'building', attributes: ['id', 'name', 'address', 'district', 'city'], paranoid: false }],
+    include: [{ model: Building, as: 'building', attributes: ['id', 'name', 'address', 'district', 'city', 'cover_document_id'], paranoid: false }],
   },
   { model: Owner, as: 'owner', attributes: ['id', 'display_name', 'company_name', 'phone'] },
 ];

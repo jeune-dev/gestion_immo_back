@@ -47,6 +47,53 @@ async function documentDeModule(ownerId, tenantId, entityType, category, visible
 describe('Documents — API complète', () => {
   afterAll(fermer);
 
+  describe('Photos du logement côté locataire', () => {
+    test('photo de couverture : choisie par le propriétaire, reçue par le locataire, limitée aux photos de l’immeuble', async () => {
+      const { proprio: p, locataire, building, apartment } = await proprietaireEtLocataire();
+      const png = await pngTest();
+      const poster = async (type, id, categorie) => (await televerser(p, { entity_type: type, entity_id: id, category: categorie }, png, 'p.png')).body.data.document;
+      const photo = await poster('building', building.id, 'photo');
+      const autrePiece = await poster('building', building.id, 'autre');
+      const photoAppartement = await poster('apartment', apartment.id, 'photo');
+      const route = `/api/v1/immeubles/${building.id}`;
+
+      const choisir = (id) => api().patch(route).set(p.h).send({ cover_document_id: id });
+      expect((await choisir(autrePiece.id)).status).toBe(422);
+      expect((await choisir(photoAppartement.id)).status).toBe(422);
+      const res = await choisir(photo.id);
+      expect(res.status).toBe(200);
+
+      const logement = await api().get('/api/v1/locataire/logement').set(locataire.h);
+      expect(JSON.stringify(logement.body.data)).toContain(`"cover_document_id":"${photo.id}"`);
+      expect((await api().get(`${BASE}/${photo.id}/fichier`).set(locataire.h)).status).toBe(200);
+
+      expect((await choisir(null)).status).toBe(200);
+      const [[ligne]] = await sequelize.query('SELECT cover_document_id FROM buildings WHERE id = :id', { replacements: { id: building.id } });
+      expect(ligne.cover_document_id).toBeNull();
+    });
+
+    test('bail actif : photos de l’appartement et de l’immeuble lisibles, rien d’autre ni pour un autre locataire', async () => {
+      const { proprio: p, locataire, apartment, building } = await proprietaireEtLocataire();
+      const autre = await proprietaireEtLocataire();
+      const png = await pngTest();
+      const poster = async (type, id, categorie) => (await televerser(p, { entity_type: type, entity_id: id, category: categorie }, png, 'p.png')).body.data.document;
+      const photoApt = await poster('apartment', apartment.id, 'photo');
+      const photoImm = await poster('building', building.id, 'photo');
+      const facture = await poster('apartment', apartment.id, 'autre');
+
+      const lire = (u, type, id) => api().get(`${BASE}?entity_type=${type}&entity_id=${id}`).set(u.h);
+      const ids = (res) => res.body.data.items.map((d) => d.id);
+      expect(ids(await lire(locataire, 'apartment', apartment.id))).toEqual([photoApt.id]);
+      expect(ids(await lire(locataire, 'building', building.id))).toEqual([photoImm.id]);
+      expect((await api().get(`${BASE}/${photoApt.id}/fichier`).set(locataire.h)).status).toBe(200);
+      expect((await api().get(`${BASE}/${photoImm.id}/lien`).set(locataire.h)).status).toBe(200);
+      expect((await api().get(`${BASE}/${facture.id}/fichier`).set(locataire.h)).status).toBe(403);
+
+      expect(ids(await lire(autre.locataire, 'apartment', apartment.id))).toEqual([]);
+      expect((await api().get(`${BASE}/${photoApt.id}/fichier`).set(autre.locataire.h)).status).toBe(403);
+    });
+  });
+
   describe('POST /documents', () => {
     test('chaque ressource manuelle : 201, locataire concerné déduit, audit, fichier stocké, miniature des images', async () => {
       const { proprio: p, lease, building, apartment, tenant } = await proprietaireEtLocataire();

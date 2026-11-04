@@ -30,8 +30,7 @@ const logger = require('../../../utils/logger.js');
 
 async function pdfQuittance({ numero, owner, tenant, apartment, building, echeance, references, date }) {
   return pdf.generer((doc, a) => {
-    a.titre('QUITTANCE DE LOYER');
-    a.note(`N° ${numero}`);
+    a.titre('QUITTANCE DE LOYER', `N° ${numero}`);
     doc.moveDown();
     a.champs([
       ['Bailleur', owner.company_name || owner.display_name],

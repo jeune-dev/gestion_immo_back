@@ -130,9 +130,7 @@ async function genererPdf(edl, rooms, owner) {
   const locataire = edl.tenant ? `${edl.tenant.first_name} ${edl.tenant.last_name}` : null;
 
   return pdf.generer((doc, a) => {
-    a.titre(titre);
-    a.note(`Version ${edl.version} — statut : ${STATUT_ETAT_DES_LIEUX[edl.status] || edl.status} — document généré le ${dateHeure(new Date())}`);
-    doc.moveDown(0.5);
+    a.titre(titre, `Version ${edl.version} · ${STATUT_ETAT_DES_LIEUX[edl.status] || edl.status} · généré le ${dateHeure(new Date())}`);
 
     a.sousTitre('Logement et parties');
     a.champs([
@@ -157,7 +155,8 @@ async function genererPdf(edl, rooms, owner) {
     ]);
 
     for (const room of rooms) {
-      a.sousTitre(room.name);
+      // Hauteur d'une pièce sans commentaire long : son tableau tient sur une seule page.
+      a.sousTitre(room.name, 40 + (room.items.length + 1) * 27);
       if (room.notes) a.paragraphe(room.notes, { align: 'left' });
       if (!room.items.length) {
         a.note('Aucun élément relevé dans cette pièce.');
@@ -165,7 +164,7 @@ async function genererPdf(edl, rooms, owner) {
       }
       a.tableau(
         ['Élément', 'État', 'Commentaire', 'Photos'],
-        room.items.map((it) => [libelleElement(it), ETAT_ELEMENT[it.condition] || it.condition, it.comment || '', String(it.photos.filter((p) => p.document).length)]),
+        room.items.map((it) => [libelleElement(it), ETAT_ELEMENT[it.condition] || it.condition, it.comment || '—', String(it.photos.filter((p) => p.document).length || '—')]),
         [3, 1.5, 5, 1]
       );
       for (const item of room.items) dessinerPhotos(doc, a, item, images);

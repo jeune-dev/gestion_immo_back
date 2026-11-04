@@ -1,6 +1,6 @@
 'use strict';
 
-const { Joi, recherche, tri, pagination } = require('../../../validations/common.js');
+const { Joi, uuid, recherche, tri, pagination } = require('../../../validations/common.js');
 
 const champs = {
   name: Joi.string().trim().min(1).max(150),
@@ -19,7 +19,7 @@ const creationSchema = Joi.object({
   city: champs.city.required(),
 });
 
-const modificationSchema = Joi.object(champs).min(1);
+const modificationSchema = Joi.object({ ...champs, cover_document_id: uuid.allow(null) }).min(1);
 
 const listeSchema = Joi.object({
   ...pagination,

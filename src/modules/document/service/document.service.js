@@ -103,6 +103,32 @@ function verifierAcces(document, { ownerId, tenantIds }) {
   throw new ForbiddenError("Vous n'avez pas accès à ce document.", 'ACCES_DOCUMENT_REFUSE');
 }
 
+/**
+ * Le logement (appartement ou son immeuble) est-il celui d'un bail actif de ce
+ * locataire ? Ses photos lui sont alors lisibles, sans partage document par
+ * document : elles n'ont pas de locataire rattaché (`tenant_id` nul).
+ */
+async function estSonLogement(tenantIds, entityType, entityId) {
+  if (!tenantIds?.length) return false;
+  const bailActif = { tenant_id: { [Op.in]: tenantIds }, status: 'actif' };
+  if (entityType === 'apartment') {
+    return (await Lease.count({ where: { ...bailActif, apartment_id: entityId } })) > 0;
+  }
+  if (entityType === 'building') {
+    return (await Lease.count({
+      where: bailActif,
+      include: [{ model: Apartment, as: 'apartment', attributes: [], required: true, where: { building_id: entityId } }],
+    })) > 0;
+  }
+  return false;
+}
+
+/** Contrôle d'accès en lecture : `verifierAcces`, ou photo du logement du locataire. */
+async function verifierLecture(document, acces) {
+  if (document.category === 'photo' && await estSonLogement(acces.tenantIds, document.entity_type, document.entity_id)) return;
+  verifierAcces(document, acces);
+}
+
 async function charger(id) {
   const document = await Document.findByPk(id);
   if (!document) throw new NotFoundError('Document introuvable');
@@ -243,14 +269,19 @@ async function televerser(ownerId, user, donnees, fichier) {
  * Liste paginée des documents visibles par l'appelant.
  *   - propriétaire : les documents de son espace ; si une ressource est
  *     désignée, elle doit lui appartenir (403 sinon) ;
- *   - locataire : uniquement les documents partagés qui le concernent.
+ *   - locataire : les documents partagés qui le concernent, et les photos de
+ *     son logement (bail actif).
  * @param {{ ownerId?: string|null, tenantIds?: string[]|null }} acces
  */
 async function lister(acces, { entity_type: entityType, entity_id: entityId } = {}, { limit, offset }) {
   const where = {};
   if (acces.tenantIds) {
-    where.tenant_id = { [Op.in]: acces.tenantIds };
-    where.visible_to_tenant = true;
+    if (await estSonLogement(acces.tenantIds, entityType, entityId)) {
+      where.category = 'photo';
+    } else {
+      where.tenant_id = { [Op.in]: acces.tenantIds };
+      where.visible_to_tenant = true;
+    }
   } else {
     if (entityType && MODELES_ENTITE[entityType]) {
       const { Modele, libelle } = MODELES_ENTITE[entityType];
@@ -308,7 +339,7 @@ function dispositionInline(document, miniature) {
  */
 async function ouvrirFichier(id, acces, { miniature = false } = {}) {
   const document = await charger(id);
-  verifierAcces(document, acces);
+  await verifierLecture(document, acces);
   const servirMiniature = miniature && Boolean(document.thumbnail_key);
   const objet = await storage.ouvrir(servirMiniature ? document.thumbnail_key : document.storage_key);
   if (!objet) throw new NotFoundError('Fichier introuvable dans le stockage', 'FICHIER_INTROUVABLE');
@@ -331,7 +362,7 @@ const DUREE_LIEN_S = 300;
  */
 async function lienTemporaire(id, acces, { miniature = false } = {}) {
   const document = await charger(id);
-  verifierAcces(document, acces);
+  await verifierLecture(document, acces);
   const servirMiniature = miniature && Boolean(document.thumbnail_key);
   const url = await storage.urlTemporaire(servirMiniature ? document.thumbnail_key : document.storage_key, DUREE_LIEN_S);
   if (url) return { url, expires_in: DUREE_LIEN_S };

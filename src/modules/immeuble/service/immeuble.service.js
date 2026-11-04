@@ -1,10 +1,10 @@
 'use strict';
 
 const sequelize = require('../../../config/db.js');
-const { Building, Apartment } = require('../../../models/index.js');
+const { Building, Apartment, Document } = require('../../../models/index.js');
 const { chargerPourProprietaire } = require('../../../utils/acces.js');
 const { ordre, rechercheTexte } = require('../../../utils/liste.js');
-const { ConflictError } = require('../../../errors/AppError.js');
+const { ConflictError, ValidationError } = require('../../../errors/AppError.js');
 const droits = require('../../abonnement/service/droits.service.js');
 const documents = require('../../document/service/document.service.js');
 const { journaliser, difference } = require('../../audit/service/audit.service.js');
@@ -14,7 +14,7 @@ const { journaliser, difference } = require('../../audit/service/audit.service.j
  * photos et documents (via le module document).
  */
 
-const CHAMPS = ['name', 'address', 'district', 'city', 'floors_count', 'declared_apartments_count', 'description'];
+const CHAMPS = ['name', 'address', 'district', 'city', 'floors_count', 'declared_apartments_count', 'description', 'cover_document_id'];
 
 /**
  * Statistiques d'occupation calculées DANS la requête de liste (sous-requêtes
@@ -61,6 +61,15 @@ async function modifier(id, ownerId, donnees) {
   return sequelize.transaction(async (t) => {
     const building = await chargerPourProprietaire(Building, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, 'Immeuble');
     const avant = building.toJSON();
+    if (donnees.cover_document_id) {
+      // La couverture est forcément une photo de CET immeuble.
+      const photo = await Document.findOne({
+        where: { id: donnees.cover_document_id, owner_id: ownerId, entity_type: 'building', entity_id: id, category: 'photo' },
+        attributes: ['id'],
+        transaction: t,
+      });
+      if (!photo) throw new ValidationError('Données invalides', ['La photo de couverture doit être une photo de cet immeuble.']);
+    }
     await building.update(donnees, { transaction: t, fields: CHAMPS });
     await journaliser({
       action: 'immeuble.modification', entityType: 'building', entityId: id, ownerId,

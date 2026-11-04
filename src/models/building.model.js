@@ -14,6 +14,7 @@ const Building = sequelize.define('Building', {
   floors_count: { type: DataTypes.SMALLINT },
   declared_apartments_count: { type: DataTypes.INTEGER },
   description: { type: DataTypes.TEXT },
+  cover_document_id: { type: DataTypes.UUID },
 }, {
   tableName: 'buildings',
   createdAt: 'created_at',

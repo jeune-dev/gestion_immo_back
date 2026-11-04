@@ -128,8 +128,7 @@ async function modelePublie(leaseType, transaction) {
 /** PDF du contrat : texte du modèle, puis clauses particulières distinguées. */
 async function pdfContrat({ titre, texte, clauses, reference, versionModele }) {
   return pdf.generer((doc, a) => {
-    a.titre(titre);
-    a.note(`Référence ${reference} — modèle version ${versionModele}`);
+    a.titre(titre, `Référence ${reference} · modèle version ${versionModele}`);
     doc.moveDown();
     a.paragraphe(texte, { align: 'left' });
     if (clauses) {
