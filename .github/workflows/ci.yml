@@ -230,7 +230,25 @@ jobs:
             # le rôle à privilèges minimaux. Une migration en échec empêche le
             # conteneur de démarrer, au lieu de laisser l'API servir du trafic
             # sur un schéma périmé.
-            ${COMPOSE} up -d --build --remove-orphans backend
+            # Construire D'ABORD, remplacer le conteneur ENSUITE.
+            #
+            # `up -d --build` fait les deux d'un seul geste, et c'est ce qui a
+            # fait échouer le déploiement : la construction (npm ci, npm rebuild
+            # bcrypt, export de l'image) occupe la machine plusieurs minutes,
+            # les sondes de postgres et de redis dépassent leur délai pendant ce
+            # temps, et `up` refuse alors de démarrer le backend —
+            # « dependency failed to start: … redis-1 is unhealthy » — alors que
+            # Redis répondait avant et répond encore après.
+            ${COMPOSE} build backend
+
+            # Dépendances alignées sur le fichier compose puis attendues
+            # (recréées une fois si besoin, diagnostic affiché en cas d'échec) :
+            # voir l'en-tête de deploy/attendre-dependances.sh.
+            bash deploy/attendre-dependances.sh postgres redis
+
+            # `--no-deps` : leur santé vient d'être vérifiée, avec de la
+            # patience. La condition `depends_on` du compose, elle, n'en a pas.
+            ${COMPOSE} up -d --no-build --no-deps --force-recreate --remove-orphans backend
 
             # On sonde l'état réel du conteneur plutôt qu'un délai fixe : le
             # HEALTHCHECK a 40 s de start-period et les migrations peuvent

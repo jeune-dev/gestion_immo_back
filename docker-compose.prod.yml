@@ -1,6 +1,8 @@
 # ============================================================
 #  Gestion Immo API — Docker Compose PRODUCTION (VPS)
-#  Usage : docker compose -f docker-compose.prod.yml up -d --build
+#  Première installation : docker compose -f docker-compose.prod.yml up -d --build
+#  Mises à jour : bash deploy/deploy.sh (construit AVANT de toucher à la pile,
+#  et attend les dépendances — voir deploy/attendre-dependances.sh).
 #  Prérequis : .env rempli (voir .env.example), nginx + Let's Encrypt sur l'hôte.
 # ============================================================
 services:
@@ -21,12 +23,16 @@ services:
     cap_drop: [ALL]
     cap_add: [CHOWN, FOWNER, DAC_OVERRIDE, SETUID, SETGID]
     security_opt: ["no-new-privileges:true"]
+    # Délais volontairement larges : la sonde doit détecter une base MORTE, pas
+    # une base LENTE. Sur un VPS modeste, une construction d'image sature la
+    # machine et `pg_isready` dépasse facilement 5 s — déclaré « unhealthy »,
+    # le service fait échouer le déploiement alors qu'il répond très bien.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_ADMIN_USER} -d ${DB_NAME}"]
       interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     deploy: { resources: { limits: { memory: 768M } } }
 
@@ -38,19 +44,34 @@ services:
     # clés AVEC expiration sont évincées sous pression mémoire (cache) ; une
     # clé sans TTL n'est jamais évincée. Les compteurs de limitation ont un TTL
     # (fenêtre) : surveiller used_memory pour qu'ils ne soient pas évincés.
-    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 128mb --maxmemory-policy volatile-lru"]
+    #
+    # `--save ''` : aucune sauvegarde sur disque. Ce Redis ne contient que des
+    # compteurs de limitation de débit et du cache (config/redis.js) — rien à
+    # conserver d'un redémarrage à l'autre. Avec les règles de sauvegarde par
+    # défaut, redis `fork()` pour écrire son instantané et la copie-sur-écriture
+    # peut doubler sa mémoire : sous la limite de 160M, le gestionnaire de
+    # mémoire tue alors le conteneur au pire moment.
+    #
+    # maxmemory 96mb (et non 128) pour laisser de la marge sous cette limite :
+    # dépassée, le conteneur est tué, alors que `volatile-lru` ne fait
+    # qu'évincer des clés de cache expirables.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --save '' --maxmemory 96mb --maxmemory-policy volatile-lru"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD requis dans .env}
     expose: ["6379"]
     cap_drop: [ALL]
     cap_add: [SETUID, SETGID]
     security_opt: ["no-new-privileges:true"]
+    # Mêmes délais larges que postgres, pour la même raison : c'est cette sonde
+    # qui, déclarée en échec pendant une construction d'image, a fait échouer le
+    # déploiement sur « dependency failed to start: … redis-1 is unhealthy ».
     healthcheck:
       # REDISCLI_AUTH : le mot de passe n'apparaît pas dans la ligne de commande.
       test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 10
+      start_period: 10s
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     deploy: { resources: { limits: { memory: 160M } } }
 

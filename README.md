@@ -135,8 +135,16 @@ npm run perf:charge -- --duree 60 --reflexion-ms 1000 --processus 4
 
 ```bash
 cp .env.example .env && nano .env      # NODE_ENV=production, secrets, domaines
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --build   # première installation
 ```
+
+Mises à jour suivantes : `bash deploy/deploy.sh`, qui construit l'image AVANT
+de toucher à la pile, attend que PostgreSQL et Redis soient sains
+(`deploy/attendre-dependances.sh`), puis remplace le seul conteneur de l'API.
+`up -d --build` enchaîne tout, et sur une machine modeste la construction fait
+dépasser le délai des sondes : compose refuse alors de démarrer l'API
+(« dependency failed to start: … is unhealthy ») pour des services qui vont
+très bien — voir `docs/EXPLOITATION.md` § 3, « Redis ».
 
 Au démarrage du conteneur (`docker-entrypoint.sh`) : attente de PostgreSQL →
 migrations → seeders → rôles/super admin → API. Une migration en échec empêche

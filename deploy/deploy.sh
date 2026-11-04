@@ -12,7 +12,14 @@ git pull --ff-only
 # (git suit le mode des fichiers).
 bash deploy/backup-postgres.sh || echo "[deploy] Avertissement : sauvegarde préalable impossible"
 
-docker compose -f docker-compose.prod.yml up -d --build
+# Construire d'abord, remplacer le conteneur ensuite — et attendre les
+# dépendances soi-même. `up -d --build` enchaîne tout, et la construction
+# sature assez la machine pour que les sondes de postgres et de redis dépassent
+# leur délai : `up` refuse alors de démarrer le backend (« dependency failed to
+# start: … is unhealthy ») pour des services qui répondent très bien.
+docker compose -f docker-compose.prod.yml build backend
+bash deploy/attendre-dependances.sh postgres redis
+docker compose -f docker-compose.prod.yml up -d --no-build --no-deps --force-recreate backend
 
 # Le port publié sur l'hôte est réglable (HOST_PORT) : un VPS qui héberge
 # plusieurs API déplace celui-ci. Le lire plutôt que le supposer, sinon la
