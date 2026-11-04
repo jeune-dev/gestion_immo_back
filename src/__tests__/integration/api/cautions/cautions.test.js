@@ -44,7 +44,7 @@ async function dossier({ versee = false, terminee = false } = {}) {
   const d = await proprietaireEtLocataire();
   const [[{ id }]] = await sequelize.query('SELECT id FROM deposits WHERE lease_id = :l', { replacements: { l: d.lease.id } });
   if (versee) expect((await verser(d.proprio, id, 700000)).status).toBe(201);
-  if (terminee) expect((await api().post(`/api/v1/baux/${d.lease.id}/terminer`).set(d.proprio.h).send({ ended_on: '2026-11-30' })).status).toBe(200);
+  if (terminee) expect((await api().post(`/api/v1/baux/${d.lease.id}/terminer`).set(d.proprio.h).send({ ended_on: '2026-10-31' })).status).toBe(200);
   return { ...d, p: d.proprio, depositId: id };
 }
 

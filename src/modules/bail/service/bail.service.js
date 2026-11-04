@@ -27,10 +27,11 @@ const { journaliser, difference } = require('../../audit/service/audit.service.j
  *       └──annuler──▶ annule
  *
  * - activer : appartement libre (verrou de ligne + index unique « un bail
- *   actif par appartement »), état des lieux d'entrée selon la politique du
+ *   actif par appartement ») et dates sans chevauchement avec un bail terminé, état des lieux d'entrée selon la politique du
  *   propriétaire (§ 52.4), échéances générées (§ 10), caution « attendue »
  *   (§ 55), appartement « occupé » (§ 41) ;
- * - terminer : échéances postérieures à la sortie annulées (si non encaissées),
+ * - terminer : une fois le locataire parti (date de sortie jamais future),
+ *   échéances postérieures à la sortie annulées (si non encaissées),
  *   appartement libéré, décompte de caution lancé avec son délai de
  *   restitution et une alerte au propriétaire (§ 55.4) ;
  * - clôturer : seulement si la caution est restituée ou le litige documenté
@@ -131,6 +132,28 @@ async function activer(id, ownerId) {
     const occupe = await Lease.count({ where: { apartment_id: apartment.id, status: 'actif' }, transaction: t });
     if (occupe) throw new ConflictError("L'appartement est déjà occupé par un bail actif.", 'APPARTEMENT_OCCUPE');
 
+    // Un bail terminé garde ses dates : le suivant ne peut pas couvrir la même
+    // période. Une entrée le jour de la sortie précédente reste permise.
+    const precedent = await Lease.findOne({
+      where: {
+        apartment_id: apartment.id,
+        id: { [Op.ne]: id },
+        status: { [Op.in]: ['termine', 'clos'] },
+        ended_on: { [Op.gt]: lease.start_date },
+        ...(lease.end_date ? { start_date: { [Op.lt]: lease.end_date } } : {}),
+      },
+      attributes: ['reference', 'start_date', 'ended_on'],
+      order: [['ended_on', 'DESC']],
+      transaction: t,
+    });
+    if (precedent) {
+      throw new ConflictError(
+        `Ces dates chevauchent le bail ${precedent.reference} (du ${formatFr(precedent.start_date)} au ${formatFr(precedent.ended_on)}). Modifiez la date de début de ce bail.`,
+        'BAUX_CHEVAUCHES',
+        { lease_reference: precedent.reference }
+      );
+    }
+
     // Fiche locataire supprimée (logiquement) après la création du brouillon :
     // un bail actif ne peut pas viser un locataire introuvable dans les listes.
     const locataire = await Tenant.findByPk(lease.tenant_id, { attributes: ['id'], transaction: t });
@@ -201,6 +224,10 @@ async function terminer(id, ownerId, { ended_on: dateSortie, termination_reason:
     const lease = await chargerPourProprietaire(Lease, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, 'Bail');
     if (lease.status !== 'actif') throw new ConflictError('Seul un bail actif peut être terminé.', 'TRANSITION_INVALIDE');
     if (dateSortie < lease.start_date) throw new ValidationError('Données invalides', ['La date de sortie précède le début du bail']);
+    // La fin libère l'appartement sur-le-champ : elle s'enregistre une fois le locataire parti.
+    if (dateSortie > aujourdhui()) {
+      throw new ValidationError('Données invalides', ['La date de sortie ne peut pas être dans le futur : terminez le bail le jour du départ.'], 'DATE_SORTIE_FUTURE');
+    }
 
     // Échéances des périodes qui commencent après la sortie : annulées si
     // aucun paiement ne les concerne (un loyer encaissé n'est jamais effacé).

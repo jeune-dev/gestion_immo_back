@@ -248,14 +248,14 @@ describe('Baux (§ 10) et contrats (§ 53)', () => {
       const brouillonBail = (await brouillon(A)).lease;
       const actif = (await bailActif(A)).lease;
       const termine = (await bailActif(A)).lease;
-      await api().post(`${BASE}/${termine.id}/terminer`).set(A.h).send({ ended_on: '2026-12-31' });
+      await api().post(`${BASE}/${termine.id}/terminer`).set(A.h).send({ ended_on: '2026-10-31' });
       const clos = (await bailActif(A, { bail: { deposit_amount: 0 } })).lease;
-      await api().post(`${BASE}/${clos.id}/terminer`).set(A.h).send({ ended_on: '2026-12-31' });
+      await api().post(`${BASE}/${clos.id}/terminer`).set(A.h).send({ ended_on: '2026-10-31' });
       expect((await api().post(`${BASE}/${clos.id}/cloturer`).set(A.h).send({})).status).toBe(200);
       const annule = (await brouillon(A)).lease;
       await api().post(`${BASE}/${annule.id}/annuler`).set(A.h).send({ reason: 'Erreur de saisie' });
 
-      const fin = { ended_on: '2026-12-31' };
+      const fin = { ended_on: '2026-10-31' };
       const loyer = { rent_amount: 1000, effective_from: ajouterJours(aujourdhui(), 30) };
       const ecarts = await verifierStatuts([
         ['post', `${BASE}/${brouillonBail.id}/terminer`, fin, 409],
@@ -328,10 +328,10 @@ describe('Baux (§ 10) et contrats (§ 53)', () => {
         ['post', `${BASE}/${lease.id}/terminer`, { ended_on: '2026-08-31' }, 422],
       ], A.h);
       expect(ecarts).toEqual([]);
-      const res = await api().post(`${BASE}/${lease.id}/terminer`).set(A.h).send({ ended_on: '2026-11-30', termination_reason: 'Départ' });
+      const res = await api().post(`${BASE}/${lease.id}/terminer`).set(A.h).send({ ended_on: '2026-10-31', termination_reason: 'Départ' });
       expect(res.status).toBe(200);
-      expect(res.body.data.lease).toMatchObject({ status: 'termine', ended_on: '2026-11-30' });
-      expect(await compter('rent_schedules', "lease_id = :id AND period_start > '2026-11-30' AND status <> 'annule'", { id: lease.id })).toBe(0);
+      expect(res.body.data.lease).toMatchObject({ status: 'termine', ended_on: '2026-10-31' });
+      expect(await compter('rent_schedules', "lease_id = :id AND period_start > '2026-10-31' AND status <> 'annule'", { id: lease.id })).toBe(0);
       const [[appart]] = await sequelize.query('SELECT status FROM apartments WHERE id = :id', { replacements: { id: apartment.id } });
       expect(appart.status).toBe('disponible');
       const [[d]] = await sequelize.query('SELECT status, refund_due_date FROM deposits WHERE id = :id', { replacements: { id: depot.id } });
@@ -501,7 +501,7 @@ describe('Baux (§ 10) et contrats (§ 53)', () => {
     test('deux terminaisons simultanées : une seule réussit, une seule entrée d’audit', async () => {
       const A = await proprietaire();
       const { lease } = await bailActif(A);
-      const reponses = await Promise.all([1, 2].map(() => api().post(`${BASE}/${lease.id}/terminer`).set(A.h).send({ ended_on: '2026-12-31' })));
+      const reponses = await Promise.all([1, 2].map(() => api().post(`${BASE}/${lease.id}/terminer`).set(A.h).send({ ended_on: '2026-10-31' })));
       expect(reponses.map((r) => r.status).sort()).toEqual([200, 409]);
       expect(await compter('audit_logs', "action = 'bail.changement_statut' AND entity_id = :id AND details->>'apres' = 'termine'", { id: lease.id })).toBe(1);
     });
@@ -533,7 +533,7 @@ describe('Baux (§ 10) et contrats (§ 53)', () => {
         ['patch', `${BASE}/${lease.id}`, { due_day: 12 }, 403],
         ['post', `${BASE}/${lease.id}/activer`, {}, 403],
         ['post', `${BASE}/${lease.id}/annuler`, { reason: 'Piratage' }, 403],
-        ['post', `${BASE}/${lease.id}/terminer`, { ended_on: '2026-12-31' }, 403],
+        ['post', `${BASE}/${lease.id}/terminer`, { ended_on: '2026-10-31' }, 403],
         ['post', `${BASE}/${lease.id}/cloturer`, {}, 403],
         ['post', `${BASE}/${lease.id}/loyer`, { rent_amount: 1, effective_from: '2027-01-01' }, 403],
         ['get', `${BASE}/${lease.id}/contrats`, undefined, 403],

@@ -187,12 +187,19 @@ const MOTIFS_IMPAYES = new Set(['loyer_impaye', 'charges']);
 
 /** Écritures d'une retenue : sortie du solde de caution, imputation des impayés. */
 async function ecrireRetenue(t, { deposit, lease, tr, montant, user, imputer }) {
+  await sortieDeRetenue(t, { deposit, lease, tr, montant, user });
+  if (imputer) await imputerRetenue(t, { lease, tr, montant, user });
+}
+
+async function sortieDeRetenue(t, { deposit, lease, tr, montant, user }) {
   await caisse.enregistrerMouvement(t, {
     ownerId: deposit.owner_id, buildingId: lease.apartment.building_id, apartmentId: lease.apartment.id, direction: 'sortie', category: 'caution',
     amount: montant, method: 'autre', occurredOn: tr.occurred_on, label: `Retenue sur caution — ${lease.reference}`,
     sourceType: 'deposit_transaction', sourceId: tr.id, createdBy: user.id,
   });
-  if (!imputer) return;
+}
+
+async function imputerRetenue(t, { lease, tr, montant, user }) {
   const { paiement } = await allocation.enregistrerPaiement(t, {
     lease,
     montant,
@@ -411,6 +418,6 @@ async function alertesRestitution(jour = aujourdhui()) {
 }
 
 module.exports = {
-  statutCaution, montantRetenu, lister, detail, verser, ajouterJustificatif, retenir, restituer, repondreContestation,
+  sortieDeRetenue, imputerRetenue, statutCaution, montantRetenu, lister, detail, verser, ajouterJustificatif, retenir, restituer, repondreContestation,
   listerPourLocataire, contester, alertesRestitution,
 };

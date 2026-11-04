@@ -502,6 +502,21 @@ function libelleCharge(invoice) {
   return `${type} ${periode}${invoice.supplier ? ` — ${invoice.supplier}` : ''}`.slice(0, 150);
 }
 
+/** Dépense et sortie de caisse d'une facture répartie (dans la transaction de l'appelant). */
+async function creerDepenseFacture(t, invoice, user, { methode, date, silencieux = false }) {
+  const categorie = await categories.globaleParCode(CATEGORIE_DEPENSE[invoice.charge_type], t);
+  return depenses.creerDansTransaction(t, invoice.owner_id, user, {
+    building_id: invoice.building_id,
+    category_id: categorie.id,
+    amount: invoice.amount,
+    method: methode || 'autre',
+    spent_on: date,
+    description: `Facture commune — ${libelleCharge(invoice)}`.slice(0, 500),
+    charge_invoice_id: invoice.id,
+    silencieux,
+  });
+}
+
 /**
  * Notifie chaque locataire concerné, UNE notification par locataire (un
  * locataire de deux appartements reçoit le total de ses parts).
@@ -575,16 +590,7 @@ async function repartir(id, ownerId, user, params) {
 
     await invoice.update({ status: 'repartie', allocated_at: new Date() }, { transaction: t });
 
-    const categorie = await categories.globaleParCode(CATEGORIE_DEPENSE[invoice.charge_type], t);
-    await depenses.creerDansTransaction(t, ownerId, user, {
-      building_id: invoice.building_id,
-      category_id: categorie.id,
-      amount: invoice.amount,
-      method: params.payment_method || 'autre',
-      spent_on: jour,
-      description: `Facture commune — ${libelle}`.slice(0, 500),
-      charge_invoice_id: id,
-    });
+    await creerDepenseFacture(t, invoice, user, { methode: params.payment_method, date: jour });
 
     const refacture = charges.reduce((s, c) => s + Number(c.amount), 0);
     const provisionsDeduites = lignes.reduce((s, l) => s + l.provision_deducted, 0);
@@ -711,5 +717,5 @@ async function annuler(id, ownerId, user, motif) {
 
 module.exports = {
   lister, aRepartir, detail, creer, modifier, ajouterDocument, apercu, repartir, annuler,
-  libelleCharge, bauxSurPeriode,
+  libelleCharge, bauxSurPeriode, creerDepenseFacture,
 };

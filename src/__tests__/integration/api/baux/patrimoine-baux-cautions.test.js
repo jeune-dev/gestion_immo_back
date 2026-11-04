@@ -163,7 +163,7 @@ describe('Patrimoine, baux et cautions', () => {
       const { p, lease, tenant, depositId } = await preparer();
       await api().post(`/api/v1/cautions/${depositId}/versements`).set(p.h).send({ amount: 700000, occurred_on: '2026-09-01', method: 'especes' });
       // Retenue impossible pendant le bail.
-      await api().post(`/api/v1/baux/${lease.id}/terminer`).set(p.h).send({ ended_on: '2026-12-31' });
+      await api().post(`/api/v1/baux/${lease.id}/terminer`).set(p.h).send({ ended_on: '2026-10-31' });
 
       const sans = await api().post(`/api/v1/cautions/${depositId}/retenues`).set(p.h).send({ amount: 100000, reason: 'degradation', description: 'Porte cassée', justification_document_ids: [] });
       expect(sans.status).toBe(422);

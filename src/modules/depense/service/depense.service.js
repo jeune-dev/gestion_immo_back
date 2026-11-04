@@ -153,7 +153,8 @@ async function creerDansTransaction(t, ownerId, user, d) {
   }, t);
 
   // § 27 « Dépense » : les AUTRES membres de l'espace (l'auteur sait ce qu'il vient de saisir).
-  const destinataires = (await destinatairesProprietaire(ownerId, t)).filter((d2) => d2.userId !== user.id);
+  // `silencieux` : écriture de reprise sur le passé, rien de nouveau à annoncer.
+  const destinataires = d.silencieux ? [] : (await destinatairesProprietaire(ownerId, t)).filter((d2) => d2.userId !== user.id);
   if (destinataires.length) {
     await notifier(t, {
       destinataires, ownerId, type: 'depense',
