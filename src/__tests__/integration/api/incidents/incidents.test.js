@@ -211,6 +211,10 @@ describe('Incidents', () => {
     expect((await api().post('/api/v1/incidents').set(p.h).send({ category: 'fuite', title: 'Fuite', description: 'xx' })).status).toBe(422);
     expect((await api().post(`/api/v1/incidents/${res.body.data.incident.id}/resoudre`).set(p.h).send({ note: 'Technicien passé' })).body.data.incident.status).toBe('resolu');
 
+    // Le filtre par locataire a besoin d'un incident de CE locataire : ce test
+    // le signale lui-même plutôt que de compter sur un autre test du fichier,
+    // l'ordre d'exécution étant aléatoire (`--randomize`).
+    expect((await signaler(locA)).status).toBe(201);
     const parLocataire = await api().get('/api/v1/incidents').query({ tenant_id: bail.tenant.id }).set(a.h);
     expect(parLocataire.body.data.items.length).toBeGreaterThan(0);
     expect(parLocataire.body.data.items.every((i) => i.tenant_id === bail.tenant.id)).toBe(true);

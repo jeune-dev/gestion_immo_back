@@ -17,12 +17,28 @@ const {
 
 const BASE = '/api/v1/notifications';
 
+/**
+ * Émet `n` notifications « <prefixe> 1 … n », horodatées à une seconde
+ * d'intervalle croissant.
+ *
+ * L'API trie par `created_at DESC, id ASC` : l'ordre est total et stable (la
+ * pagination ne saute ni ne répète jamais une ligne), mais deux notifications
+ * créées dans la même milliseconde sont départagées par leur UUID — un ordre
+ * arbitraire, alors que ces tests décrivent « la plus récente d'abord ». On
+ * espace donc les horodatages, sinon l'ordre attendu tient au hasard.
+ */
 async function emettre(userId, ownerId, n, prefixe = 'Avis') {
   for (let i = 1; i <= n; i += 1) {
     await notifier(null, {
       destinataires: [{ userId }], ownerId, type: 'echeance', titre: `${prefixe} ${i}`, corps: `Corps ${i}`, donnees: { rang: i },
     });
   }
+  await sequelize.query(
+    `UPDATE notifications
+        SET created_at = now() - make_interval(secs => :n - (data->>'rang')::int)
+      WHERE user_id = :u AND title LIKE :motif`,
+    { replacements: { u: userId, n, motif: `${prefixe} %` } }
+  );
 }
 
 const idsDe = async (h, q = '') => (await api().get(`${BASE}${q}`).set(h)).body.data.items.map((n) => n.id);

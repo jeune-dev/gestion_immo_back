@@ -11,6 +11,7 @@ const sequelize = require('../../config/db.js');
 const bcrypt = require('../../utils/motDePasse.js');
 const totp = require('../../utils/totp.js');
 const { encrypt } = require('../../utils/cryptoField.js');
+const arrierePlan = require('../../utils/arrierePlan.js');
 const {
   aujourdhui, ajouterJours, ajouterMois, avecJour, debutMois, finMois, libelleMois,
 } = require('../../utils/dates.js');
@@ -277,6 +278,11 @@ async function compter(table, condition = 'TRUE', replacements = {}) {
 }
 
 async function fermer() {
+  // Les tâches d'arrière-plan (diffusion des notifications, clés
+  // d'idempotence) s'exécutent après la réponse HTTP : on les laisse finir,
+  // sinon elles écrivent pendant le fichier de tests suivant — le worker est
+  // le même processus — et faussent ses décomptes.
+  await arrierePlan.attendre();
   await sequelize.close();
 }
 
@@ -284,5 +290,6 @@ module.exports = {
   api, apiBrute, bearer, MOT_DE_PASSE, telephoneUnique, emailUnique,
   nouveauProprietaire, superAdmin, codeTotp, creerImmeuble, creerAppartement, creerLocataire,
   desactiverEdlObligatoire, bailActif, activerLocataire, fermer, sequelize, reperes, bailRelatif,
+  attendreArrierePlan: arrierePlan.attendre,
   echeancesDu, payerEspeces, pngTest, proprietaireEtLocataire, expirerAbonnement, publierModeleBail, compter,
 };

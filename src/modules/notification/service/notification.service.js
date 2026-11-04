@@ -7,6 +7,7 @@ const droits = require('../../abonnement/service/droits.service.js');
 const parametres = require('../../parametres/service/parametres.service.js');
 const { DEFAUTS_PROPRIETAIRE } = require('../../../config/parametres.js');
 const { masquerTelephone } = require('../../../utils/telephone.js');
+const { lancer } = require('../../../utils/arrierePlan.js');
 const logger = require('../../../utils/logger.js');
 
 /**
@@ -53,8 +54,11 @@ async function notifier(t, { destinataires, ownerId, type, titre, corps, donnees
 
   const envoyer = () => {
     uniques.forEach((d, i) => {
-      diffuser(d, notifications[i], { ownerId, type, titre, corps, donnees, whatsappMessage })
-        .catch((err) => logger.warn('[notification] Diffusion externe en échec', { type, error: err.message }));
+      // Tâche d'arrière-plan enregistrée (utils/arrierePlan.js) : la réponse
+      // HTTP ne l'attend pas, mais elle reste observable — sinon son écriture
+      // `message_deliveries` retombe au milieu de la mesure d'un autre test.
+      lancer(diffuser(d, notifications[i], { ownerId, type, titre, corps, donnees, whatsappMessage })
+        .catch((err) => logger.warn('[notification] Diffusion externe en échec', { type, error: err.message })));
     });
   };
 

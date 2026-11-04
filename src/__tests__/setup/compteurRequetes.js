@@ -11,6 +11,7 @@
  * différentes » — la signature d'un N+1.
  */
 const sequelize = require('../../config/db.js');
+const arrierePlan = require('../../utils/arrierePlan.js');
 
 let enCours = null;
 
@@ -33,6 +34,10 @@ function normaliser(sql) {
 /** Exécute `fn` et renvoie `{ resultat, total, formes }` (formes : Map forme → occurrences). */
 async function mesurer(fn) {
   if (enCours) throw new Error('mesurer() ne peut pas être imbriqué');
+  // Les diffusions de notifications et les clés d'idempotence s'écrivent APRÈS
+  // la réponse HTTP : sans ce drainage, l'écriture d'un appel précédent tombe
+  // au milieu du relevé et se lit comme un N+1 (utils/arrierePlan.js).
+  await arrierePlan.attendre();
   enCours = [];
   let requetes;
   let resultat;

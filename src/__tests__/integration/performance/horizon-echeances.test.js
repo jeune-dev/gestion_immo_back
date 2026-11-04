@@ -5,7 +5,9 @@ const {
 } = require('../../setup/helpers.js');
 const { mesurer } = require('../../setup/compteurRequetes.js');
 const echeances = require('../../../modules/loyer/service/echeance.service.js');
-const { aujourdhui, ajouterMois, ajouterJours } = require('../../../utils/dates.js');
+const {
+  aujourdhui, ajouterMois, ajouterJours, finMois,
+} = require('../../../utils/dates.js');
 
 /**
  * Job quotidien « echeances » — prolongation de l'horizon de 12 mois (§ 10).
@@ -18,14 +20,9 @@ const { aujourdhui, ajouterMois, ajouterJours } = require('../../../utils/dates.
  */
 describe('Prolongation de l’horizon des échéances : seuls les baux à prolonger sont traités', () => {
   let p;
-  let bail;
-  let bailAvecFin;
 
   beforeAll(async () => {
     p = await nouveauProprietaire();
-    ({ lease: bail } = await bailActif(p));
-    // Bail de 6 mois : toutes ses périodes existent dès l'activation.
-    ({ lease: bailAvecFin } = await bailActif(p, { bail: { end_date: '2027-02-28' } }));
     await echeances.prolongerHorizons(); // état de départ : tous les baux de la base à jour
   });
 
@@ -39,24 +36,33 @@ describe('Prolongation de l’horizon des échéances : seuls les baux à prolon
     expect(m.total).toBe(1);
   });
 
+  // Chaque test crée SES baux : « un mois plus tard » prolonge d'une période
+  // tous les baux de la base, ce qui, pour un bail partagé, repousserait la
+  // période suivante hors de l'horizon du jour — le test précédent ne verrait
+  // alors plus rien à regénérer, selon l'ordre d'exécution (`--randomize`).
   test('une période manquante en fin d’horizon est regénérée, pour ce bail seulement', async () => {
-    const avant = await nb(bail.id);
+    const { lease } = await bailActif(p);
+    const avant = await nb(lease.id);
     await sequelize.query(
       'DELETE FROM rent_schedules WHERE id = (SELECT id FROM rent_schedules WHERE lease_id = :l ORDER BY period_start DESC LIMIT 1)',
-      { replacements: { l: bail.id } }
+      { replacements: { l: lease.id } }
     );
     const m = await mesurer(() => echeances.prolongerHorizons());
     expect(m.resultat).toBe(1);
-    expect(await nb(bail.id)).toBe(avant);
+    expect(await nb(lease.id)).toBe(avant);
     expect(m.total).toBeLessThanOrEqual(10); // présélection + une transaction de génération
   });
 
   test('un mois plus tard : chaque bail sans fin gagne UNE période ; le bail terminé dans l’horizon, aucune', async () => {
-    const [avant, avantFin] = [await nb(bail.id), await nb(bailAvecFin.id)];
+    const { lease: sansFin } = await bailActif(p);
+    // Bail court : toutes ses périodes existent dès l'activation, un mois de
+    // plus ne lui en ajoute donc aucune.
+    const { lease: avecFin } = await bailActif(p, { bail: { end_date: finMois(ajouterMois(aujourdhui(), 4)) } });
+    const [avant, avantFin] = [await nb(sansFin.id), await nb(avecFin.id)];
     const dans1Mois = ajouterMois(aujourdhui(), 1);
     await echeances.prolongerHorizons(dans1Mois);
-    expect(await nb(bail.id)).toBe(avant + 1);
-    expect(await nb(bailAvecFin.id)).toBe(avantFin);
+    expect(await nb(sansFin.id)).toBe(avant + 1);
+    expect(await nb(avecFin.id)).toBe(avantFin);
     // Et le même jour, plus rien à faire.
     const m = await mesurer(() => echeances.prolongerHorizons(dans1Mois));
     expect(m.total).toBe(1);

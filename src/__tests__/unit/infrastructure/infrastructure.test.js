@@ -109,15 +109,27 @@ describe('e-mail transactionnel (Resend)', () => {
 describe('disjoncteur des services externes', () => {
   const { Disjoncteur, avecDelai } = require('../../../utils/circuitBreaker.js');
   test('ouvert après N échecs, refus immédiat, puis essai unique et fermeture', async () => {
-    const d = new Disjoncteur('test', { seuilEchecs: 2, dureeOuvertureMs: 50, delaiAppelMs: 1000 });
     const panne = () => Promise.reject(new Error('panne'));
+
+    // Fenêtre d'ouverture longue pour le REFUS : la suite tourne en parallèle,
+    // et quelques dizaines de millisecondes peuvent s'écouler entre deux
+    // instructions — une fenêtre de 50 ms serait déjà passée en essai unique,
+    // et l'appel suivant aboutirait au lieu d'être refusé.
+    const d = new Disjoncteur('test', { seuilEchecs: 2, dureeOuvertureMs: 10_000, delaiAppelMs: 1000 });
     await expect(d.executer(panne)).rejects.toThrow('panne');
     await expect(d.executer(panne)).rejects.toThrow('panne');
     expect(d.etatCourant().etat).toBe('ouvert');
     await expect(d.executer(() => 'ok')).rejects.toMatchObject({ statusCode: 503, code: 'SERVICE_EXTERNE_INDISPONIBLE' });
+
+    // Fenêtre brève pour l'ESSAI UNIQUE : attendre plus que prévu est sans
+    // conséquence ici, seule la reprise est observée.
+    const bref = new Disjoncteur('test-bref', { seuilEchecs: 2, dureeOuvertureMs: 50, delaiAppelMs: 1000 });
+    await expect(bref.executer(panne)).rejects.toThrow('panne');
+    await expect(bref.executer(panne)).rejects.toThrow('panne');
+    expect(bref.etatCourant().etat).toBe('ouvert');
     await new Promise((r) => setTimeout(r, 60));
-    expect(await d.executer(() => 'ok')).toBe('ok');
-    expect(d.etatCourant().etat).toBe('ferme');
+    expect(await bref.executer(() => 'ok')).toBe('ok');
+    expect(bref.etatCourant().etat).toBe('ferme');
   });
   test('un refus de la REQUÊTE ne compte pas comme une panne du service', async () => {
     const d = new Disjoncteur('test2', { seuilEchecs: 1, estEchecDependance: (e) => e.panne === true });

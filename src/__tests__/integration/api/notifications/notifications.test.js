@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, nouveauProprietaire, superAdmin, bailActif, activerLocataire, fermer,
+  api, nouveauProprietaire, superAdmin, bailActif, activerLocataire, fermer, sequelize,
 } = require('../../../setup/helpers.js');
 const { notifier } = require('../../../../modules/notification/service/notification.service.js');
 
@@ -13,7 +13,15 @@ const { notifier } = require('../../../../modules/notification/service/notificat
 
 const BASE = '/api/v1/notifications';
 
-/** Notifications réelles, émises par le service (sans canal externe configuré en test). */
+/**
+ * Notifications réelles, émises par le service (sans canal externe configuré
+ * en test), horodatées à une seconde d'intervalle croissant.
+ *
+ * L'API trie par `created_at DESC, id ASC` : l'ordre est total et stable (la
+ * pagination ne saute ni ne répète jamais une ligne), mais deux notifications
+ * créées dans la même milliseconde sont départagées par leur UUID — un ordre
+ * arbitraire, alors que ce fichier décrit « les plus récentes d'abord ».
+ */
 async function emettre(destinataire, ownerId, n) {
   for (let i = 1; i <= n; i += 1) {
     await notifier(null, {
@@ -25,6 +33,12 @@ async function emettre(destinataire, ownerId, n) {
       donnees: { rang: i },
     });
   }
+  await sequelize.query(
+    `UPDATE notifications
+        SET created_at = now() - make_interval(secs => :n - (data->>'rang')::int)
+      WHERE user_id = :u AND title LIKE 'Échéance %'`,
+    { replacements: { u: destinataire.user.id, n } }
+  );
 }
 
 describe('Notifications (§ 27)', () => {

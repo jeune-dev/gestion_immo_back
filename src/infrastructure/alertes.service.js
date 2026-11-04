@@ -107,9 +107,13 @@ async function alerter(type, message, details = {}) {
 
 // ── Rafales (erreurs serveur, dépassements de limites) ─────────────────────
 
+// Remise à zéro de chaque compteur de rafale, pour `reinitialiser`.
+const videurs = [];
+
 /** Compteur à fenêtre glissante d'une minute : alerte au franchissement du seuil. */
 function compteurRafale(type, seuilVariable, seuilDefaut, message) {
   const horodatages = [];
+  videurs.push(() => { horodatages.length = 0; });
   return (details = {}) => {
     const maintenant = Date.now();
     horodatages.push(maintenant);
@@ -125,7 +129,16 @@ function compteurRafale(type, seuilVariable, seuilDefaut, message) {
 const signalerErreurServeur = compteurRafale(TYPES.ERREURS_SERVEUR, 'ALERTE_SEUIL_5XX_MINUTE', 20, 'erreurs serveur (5xx)');
 const signalerDepassementLimite = compteurRafale(TYPES.ABUS_LIMITES, 'ALERTE_SEUIL_LIMITES_MINUTE', 200, 'requêtes refusées par les limites de débit');
 
-/** Pour les tests : oublie l'anti-répétition. */
-const reinitialiser = () => derniersEnvois.clear();
+/**
+ * Pour les tests : oublie l'anti-répétition ET les compteurs de rafale.
+ *
+ * Les fenêtres glissantes durent une minute : sans cette remise à zéro, une
+ * erreur 500 provoquée par un autre test comptait encore dans le seuil du
+ * suivant, qui alertait un cran trop tôt selon l'ordre d'exécution.
+ */
+const reinitialiser = () => {
+  derniersEnvois.clear();
+  for (const vider of videurs) vider();
+};
 
 module.exports = { alerter, TYPES, signalerErreurServeur, signalerDepassementLimite, reinitialiser };

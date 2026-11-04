@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const { UniqueConstraintError } = require('sequelize');
 const { IdempotencyKey } = require('../models/index.js');
 const { ConflictError, ValidationError } = require('../errors/AppError.js');
+const { lancer } = require('../utils/arrierePlan.js');
 const logger = require('../utils/logger.js');
 
 /**
@@ -116,9 +117,9 @@ const idempotence = ({ obligatoire = false } = {}) => async (req, res, next) => 
     // « requête en cours » — course observée sous charge.
     if (!aConserver(res.statusCode, true, true)) {
       liberee = true;
-      entree.destroy()
+      lancer(entree.destroy()
         .catch((err) => logger.warn('[idempotence] Libération de la clé impossible', { error: err.message }))
-        .finally(() => jsonOriginal(valeur));
+        .finally(() => jsonOriginal(valeur)));
       return res;
     }
     return jsonOriginal(valeur);
@@ -133,7 +134,8 @@ const idempotence = ({ obligatoire = false } = {}) => async (req, res, next) => 
     const operation = !aRejouer
       ? entree.destroy()
       : entree.update({ status: 'termine', response_status: res.statusCode, response_body: corps ?? null });
-    operation.catch((err) => logger.warn('[idempotence] Enregistrement de la réponse impossible', { error: err.message }));
+    // Après la réponse, donc enregistrée comme tâche d'arrière-plan.
+    lancer(operation.catch((err) => logger.warn('[idempotence] Enregistrement de la réponse impossible', { error: err.message })));
   });
 
   return next();

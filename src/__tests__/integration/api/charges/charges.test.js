@@ -295,6 +295,10 @@ describe('Charges — factures communes et répartition', () => {
   });
 
   test('charges côté propriétaire : liste filtrée et détail avec explication', async () => {
+    // Ce test répartit SA propre facture : l'ordre d'exécution étant aléatoire
+    // (`--randomize`), aucune charge n'est garantie par les tests précédents.
+    const inv = (await facture()).body.data.invoice;
+    expect((await api().post(`${FC}/${inv.id}/repartir`).set(proprio.h).send({})).status).toBe(200);
     const liste = await api().get('/api/v1/charges').query({ building_id: immeuble.id, tenant_id: locataires[0].id }).set(proprio.h);
     expect(liste.status).toBe(200);
     expect(liste.body.data.items.length).toBeGreaterThan(0);

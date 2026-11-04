@@ -5,6 +5,7 @@ const sequelize = require('./config/db.js');
 const app = require('./app.js');
 const { demarrerJobs } = require('./jobs/index.js');
 const etatApplication = require('./utils/etatApplication.js');
+const arrierePlan = require('./utils/arrierePlan.js');
 const metrics = require('./utils/metrics.js');
 const logger = require('./utils/logger.js');
 const { verifierRoleApplicatif } = require('./scripts/rolesBase.js');
@@ -20,7 +21,7 @@ const { alerter, TYPES } = require('./infrastructure/alertes.service.js');
  *   une fois par worker. Un verrou consultatif PostgreSQL couvre en plus le
  *   cas de plusieurs hôtes (jobs/executerJob.js).
  * - Arrêt : plus de nouvelles requêtes, drainage (10 s max), arrêt des
- *   tâches, fermeture du pool.
+ *   tâches, fin des tâches d'arrière-plan, fermeture du pool.
  */
 
 const instance = process.env.NODE_APP_INSTANCE;
@@ -85,6 +86,11 @@ async function arretPropre(signal, codeSortie = 0) {
       serveur.closeIdleConnections?.();
       await fermeture;
     }
+    // Le travail lancé après la dernière réponse (diffusion des notifications,
+    // clés d'idempotence) a besoin de la base : on le laisse finir AVANT de
+    // fermer le pool, sinon il meurt en silence. Le filet de 10 s plus haut
+    // garantit que l'arrêt aboutit quand même.
+    await arrierePlan.attendre();
     await sequelize.close();
   } catch (err) {
     logger.error('Erreur pendant l’arrêt propre', { error: err.message });

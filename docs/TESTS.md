@@ -77,6 +77,17 @@ lui fournir d'identifiants — aucune route paramétrée ne peut passer inaperç
 
 - Tester le comportement observable (réponse + base), pas l'implémentation.
 - Un test qui révèle un bug : **on corrige le backend**, jamais le test.
+- **Aucune date absolue dans un jeu de données.** Un bail au 1er septembre
+  n'est « en retard » qu'une partie de l'année : `reperes()` (setup/helpers.js)
+  donne un bail calé sur le jour de l'exécution — période `p0` échue, période
+  `p1` à venir — et `bailRelatif(r)` se passe en `bail` de `bailActif`.
+- **Aucune attente sur l'état laissé par un autre test.** L'ordre est
+  aléatoire en intégration continue (`--randomize`) : un test qui pagine crée
+  lui-même ses deux lignes, un test qui compte des fichiers se limite au
+  dossier de SON propriétaire, un test qui mesure des requêtes SQL passe par
+  `mesurer()`, qui attend d'abord la fin des tâches d'arrière-plan
+  (`utils/arrierePlan.js` — diffusion des notifications, clés d'idempotence,
+  écrites APRÈS la réponse HTTP).
 - Toujours au moins un cas d'échec par règle métier.
 - Noms de tests en français, décrivant la règle (§ du cahier des charges).
 - Aucune attente arbitraire (`sleep`) : les courses sont provoquées par `Promise.all`.

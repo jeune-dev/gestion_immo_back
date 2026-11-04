@@ -15,15 +15,28 @@ const {
  *   GET /locataire/quittances · GET /locataire/quittances/:id · GET /locataire/quittances/:id/pdf
  */
 
-/** Texte d'un PDF pdfkit (polices standard, flux compressés) — suffisant pour vérifier le contenu. */
+/**
+ * Texte d'un PDF pdfkit (polices standard, flux compressés) — suffisant pour
+ * vérifier le contenu.
+ *
+ * Les flux sont repérés sur les OCTETS, et décompressés jusqu'à la fin du
+ * tampon avec `Z_SYNC_FLUSH` : délimiter chaque flux par « endstream » dans
+ * une chaîne latin1 échouait dès que les octets COMPRESSÉS contenaient cette
+ * suite — ce qui dépend des données de la quittance (numéro, références,
+ * dates), donc arrivait par intermittence et rendait le texte vide.
+ */
 function texteDuPdf(buffer) {
-  const brut = buffer.toString('latin1');
   const morceaux = [];
-  const flux = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  let m;
-  while ((m = flux.exec(brut))) {
+  const marqueur = Buffer.from('stream');
+  for (let i = buffer.indexOf(marqueur); i !== -1; i = buffer.indexOf(marqueur, i + 1)) {
+    if (buffer.subarray(Math.max(0, i - 3), i).toString('latin1') === 'end') continue; // « endstream »
+    let debut = i + marqueur.length;
+    if (buffer[debut] === 0x0d) debut += 1;
+    if (buffer[debut] === 0x0a) debut += 1;
     let contenu;
-    try { contenu = zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); } catch { continue; }
+    try {
+      contenu = zlib.inflateSync(buffer.subarray(debut), { finishFlush: zlib.constants.Z_SYNC_FLUSH }).toString('latin1');
+    } catch { continue; } // flux non compressé (image, police) : sans intérêt ici
     for (const operation of contenu.match(/\[(.*?)\]\s*TJ/g) || []) {
       morceaux.push((operation.match(/<([0-9a-fA-F]*)>/g) || []).map((h) => Buffer.from(h.slice(1, -1), 'hex').toString('latin1')).join(''));
     }

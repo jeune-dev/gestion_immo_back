@@ -225,6 +225,10 @@ describe('Incidents — couverture complète', () => {
 
     test('« Mes demandes » : les siennes seulement, filtre statut, pagination ; 422 si invalide', async () => {
       const mien = await nouvelIncident();
+      // Deux demandes au moins : la pagination « limit=1 & page=2 » plus bas
+      // ne doit pas dépendre de ce qu'ont laissé les tests précédents, l'ordre
+      // d'exécution étant aléatoire (`--randomize`).
+      await nouvelIncident();
       const sien = (await signaler(loc2)).body.data.incident;
       const liste = await api().get(L).query({ limit: 100 }).set(loc.h);
       expect(liste.status).toBe(200);

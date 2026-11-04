@@ -80,7 +80,11 @@ describe('Transactions et cohérence après erreur', () => {
     const p = await nouveauProprietaire();
     const { lease } = await bailActif(p);
     const [[d]] = await sequelize.query('SELECT id FROM deposits WHERE lease_id = :l', { replacements: { l: lease.id } });
-    const fichiersAvant = compterFichiers(storage.UPLOAD_DIR);
+    // Décompte limité au dossier de CE propriétaire (`owners/<id>/…`, voir
+    // document.service.js) : le dossier d'envois est partagé par tous les
+    // fichiers de tests du worker, un décompte global y compterait les leurs.
+    const aMoi = () => compterFichiers(path.join(storage.UPLOAD_DIR, 'owners', p.ownerId));
+    const fichiersAvant = aMoi();
     const docsAvant = await compter('documents', 'owner_id = :o', { o: p.ownerId });
     // Justificatif accepté puis retenue refusée (bail encore actif) : la retenue
     // n'écrit rien ; le justificatif, opération distincte, reste valide.
@@ -94,7 +98,7 @@ describe('Transactions et cohérence après erreur', () => {
     const faux = await api().post(`/api/v1/cautions/${d.id}/justificatifs`).set(p.h).attach('fichier', Buffer.from('ceci n’est pas une image'), 'faux.png');
     expect(faux.status).toBe(400);
     expect(await compter('documents', 'owner_id = :o', { o: p.ownerId })).toBe(docsAvant + 1);
-    expect(compterFichiers(storage.UPLOAD_DIR)).toBe(fichiersAvant + 2); // original + miniature du seul justificatif accepté
+    expect(aMoi()).toBe(fichiersAvant + 2); // original + miniature du seul justificatif accepté
   });
 
   test('le journal d’audit suit la transaction : écrit au COMMIT, absent après ROLLBACK', async () => {
