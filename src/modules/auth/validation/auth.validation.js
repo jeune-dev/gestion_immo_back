@@ -30,14 +30,24 @@ const refreshSchema = Joi.object({
 
 const deconnexionSchema = refreshSchema;
 
-// § 5 — mot de passe oublié (code à 6 chiffres envoyé par e-mail).
+// § 5 — mot de passe oublié, en trois étapes (comme Yobante) : demande du
+// code → vérification du code → nouveau mot de passe. Code de 8 caractères
+// (lettres et chiffres) envoyé par e-mail ; casse et espaces indifférents.
 const motDePasseOublieSchema = Joi.object({
   identifiant: Joi.string().trim().max(254).required(),
 });
 
+const codeReinitialisation = Joi.string().replace(/\s+/g, '').uppercase().pattern(/^[A-Z0-9]{8}$/).required()
+  .messages({ 'string.pattern.base': 'Le code contient 8 caractères (lettres et chiffres)' });
+
+const verificationCodeSchema = Joi.object({
+  identifiant: Joi.string().trim().max(254).required(),
+  code: codeReinitialisation,
+});
+
 const reinitialisationSchema = Joi.object({
   identifiant: Joi.string().trim().max(254).required(),
-  code: Joi.string().trim().pattern(/^\d{6}$/).required().messages({ 'string.pattern.base': 'Le code doit contenir 6 chiffres' }),
+  code: codeReinitialisation,
   password: motDePasse.required(),
   password_confirmation: Joi.any().valid(Joi.ref('password')).required()
     .messages({ 'any.only': 'La confirmation du mot de passe ne correspond pas' }),
@@ -72,5 +82,5 @@ const mfaSchema = Joi.object({
 
 module.exports = {
   inscriptionSchema, connexionSchema, refreshSchema, deconnexionSchema,
-  motDePasseOublieSchema, reinitialisationSchema, activationSchema, mfaSchema, codeTotp, codeSecours,
+  motDePasseOublieSchema, verificationCodeSchema, reinitialisationSchema, activationSchema, mfaSchema, codeTotp, codeSecours,
 };

@@ -90,7 +90,9 @@ async function confirmer(t, tx, { idFournisseur = null, montant, telephone = nul
     lease,
     montant,
     methode: methodePaiement(tx.wallet, tx.provider),
-    datePaiement: aujourdhui(),
+    // Preuve validée à la main : l'argent a été versé au plus tard au dépôt de
+    // la preuve, pas le jour où le propriétaire la valide.
+    datePaiement: tx.mode === 'preuve' && tx.created_at ? aujourdhui(new Date(tx.created_at)) : aujourdhui(),
     enregistrePar: validePar || tx.initiated_by,
     transactionId: tx.id,
     cible,
@@ -211,6 +213,18 @@ async function traiterConfirmation(ownerId, evt, fournisseur, charge) {
         return { traite: true, deja: r.deja, transaction_id: tx.id };
       }
 
+      // Sans référence, seul l'identifiant du fournisseur reconnaît une
+      // notification renvoyée : déjà rapprochée automatiquement, elle ne doit ni
+      // solder une autre échéance ni créer une entrée « À rapprocher ».
+      if (evt.idFournisseur) {
+        const dejaConfirmee = await PaymentTransaction.findOne({
+          where: { provider: fournisseur, provider_transaction_id: evt.idFournisseur },
+          attributes: ['id'],
+          transaction: t,
+        });
+        if (dejaConfirmee) return { traite: true, deja: true, transaction_id: dejaConfirmee.id };
+      }
+
       // 2. Par montant + numéro payeur.
       const telephone = normaliserTelephone(evt.telephone);
       if (telephone && evt.montant > 0) {
@@ -312,7 +326,9 @@ async function resoudre(ownerId, user, id, { lease_id: leaseId, rent_schedule_id
       if (entree.transaction_id) {
         await PaymentTransaction.update(
           { status: 'confirmee', confirmed_at: new Date(), validated_by: user.id, validated_at: new Date() },
-          { where: { id: entree.transaction_id, status: 'a_rapprocher' }, transaction: t }
+          // « en_attente » ou « annulee » : confirmation mise de côté car incohérente
+          // avec sa facture, la transaction n'était pas passée « a_rapprocher ».
+          { where: { id: entree.transaction_id, status: ['a_rapprocher', 'en_attente', 'annulee'] }, transaction: t }
         );
       }
       await entree.update({ lease_id: lease.id, tenant_id: lease.tenant_id, rent_payment_id: resultat.paiement.id }, { transaction: t });

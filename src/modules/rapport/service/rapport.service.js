@@ -7,7 +7,7 @@ const { verifierReference } = require('../../../utils/acces.js');
 const { FUSEAU, ecartJours } = require('../../../utils/dates.js');
 const {
   IMMEUBLE, DEBUT_JOUR, FIN_JOUR, ENCAISSEMENTS, AUTRES_REVENUS, DEPENSES, DEPENSES_PAR_CATEGORIE,
-  IMPAYES_A_DATE, OCCUPATION, pourcentage,
+  IMPAYES_A_DATE, CHARGES_IMPAYEES_A_DATE, OCCUPATION, STATUTS_TRAVAUX_EN_COURS, pourcentage,
 } = require('./indicateurs.js');
 
 /**
@@ -21,8 +21,6 @@ const {
  * Les définitions (revenus, impayés…) sont celles de `indicateurs.js`,
  * partagées avec le tableau de bord.
  */
-
-const STATUTS_TRAVAUX_EN_COURS = "('valide', 'artisan_assigne', 'en_cours')";
 
 const requete = (sql, replacements) => sequelize.query(sql, { replacements, type: QueryTypes.SELECT });
 
@@ -50,8 +48,8 @@ async function contexte(ownerId, { du, au, building_id: buildingId }) {
 
 const SQL_FIN_TOTAUX = `
   SELECT en.loyers, en.charges, ar.autres, dep.depenses,
-         imp.impayes, imp.echeances_impayees, imp.locataires_debiteurs,
-         fa.factures_total, fa.nombre_factures, fa.refacture, fa.recupere
+         imp.impayes, imp.echeances_impayees, imp.locataires_debiteurs, ich.charges_impayees,
+         fa.factures_total, fa.nombre_factures, fa.refacture, fa.recupere, fa.provisions
     FROM
       (SELECT COALESCE(sum(amount) FILTER (WHERE est_loyer), 0) AS loyers,
               COALESCE(sum(amount) FILTER (WHERE NOT est_loyer), 0) AS charges
@@ -61,9 +59,15 @@ const SQL_FIN_TOTAUX = `
       (SELECT COALESCE(sum(reste), 0) AS impayes, count(*) AS echeances_impayees,
               count(DISTINCT tenant_id) AS locataires_debiteurs
          FROM (${IMPAYES_A_DATE}) x) imp,
+      (SELECT COALESCE(sum(reste), 0) AS charges_impayees FROM (${CHARGES_IMPAYEES_A_DATE}) x) ich,
       (SELECT COALESCE(sum(ci.amount), 0) AS factures_total, count(*) AS nombre_factures,
-              COALESCE(sum(ch.refacture), 0) AS refacture, COALESCE(sum(ch.recupere), 0) AS recupere
+              COALESCE(sum(ch.refacture), 0) AS refacture, COALESCE(sum(ch.recupere), 0) AS recupere,
+              COALESCE(sum(pr.provisions), 0) AS provisions
          FROM charge_invoices ci
+         LEFT JOIN (SELECT ca.charge_invoice_id, sum(ca.provision_deducted) AS provisions
+                      FROM charge_allocations ca
+                     WHERE ca.owner_id = :ownerId
+                     GROUP BY ca.charge_invoice_id) pr ON pr.charge_invoice_id = ci.id
          LEFT JOIN (SELECT c.charge_invoice_id, sum(c.amount) AS refacture, sum(c.amount_paid) AS recupere
                       FROM charges c
                      WHERE c.owner_id = :ownerId AND c.status <> 'annule'
@@ -122,6 +126,7 @@ async function financier(ownerId, filtres) {
     impayes: {
       date: params.au,
       montant: t.impayes,
+      charges: t.charges_impayees,
       echeances: t.echeances_impayees,
       locataires: t.locataires_debiteurs,
     },
@@ -131,7 +136,8 @@ async function financier(ownerId, filtres) {
       refacturees_locataires: t.refacture,
       recuperees_locataires: t.recupere,
       reste_a_recouvrer: t.refacture - t.recupere,
-      a_charge_proprietaire: t.factures_total - t.refacture,
+      provisions_deduites: t.provisions,
+      a_charge_proprietaire: t.factures_total - t.refacture - t.provisions,
     },
     par_immeuble: immeubles.map((b) => {
       const total = b.loyers + b.charges + b.autres;
@@ -426,7 +432,8 @@ function ordreRentabilite(tri) {
  * l'appartement — caution exclue, § 55.4), dépenses rattachées à
  * l'appartement, résultat net, jours et taux d'occupation, rang par résultat.
  * Les dépenses d'immeuble non rattachées à un appartement n'y figurent pas
- * (elles sont dans le rapport financier par immeuble).
+ * (elles sont dans le rapport financier par immeuble), sauf les factures communes :
+ * chaque appartement porte sa part répartie, face à la charge récupérée.
  *
  * UNE requête : agrégats GROUP BY par appartement joints à gauche, rang et
  * total par fonctions de fenêtre, pagination SQL. `limit` nul = export complet.
@@ -445,6 +452,14 @@ const sqlRentabilite = (ordre) => `
      WHERE apartment_id IS NOT NULL GROUP BY apartment_id
   ),
   occ AS (${OCCUPATION}),
+  communes AS (
+    SELECT ca.apartment_id, sum(ca.amount) AS montant
+      FROM charge_allocations ca
+      JOIN charge_invoices ci ON ci.id = ca.charge_invoice_id
+     WHERE ca.owner_id = :ownerId AND ci.status = 'repartie'
+       AND (ci.allocated_at AT TIME ZONE :fuseau)::date BETWEEN :du AND :au
+     GROUP BY ca.apartment_id
+  ),
   lignes AS (
     SELECT a.id AS apartment_id, a.number AS apartment_number, a.type, a.status, a.rent_amount,
            b.id AS building_id, b.name AS building_name,
@@ -454,7 +469,8 @@ const sqlRentabilite = (ordre) => `
            COALESCE(enc.loyers, 0) + COALESCE(enc.charges, 0) + COALESCE(ar.autres, 0) AS revenus,
            COALESCE(dep.depenses, 0) AS depenses,
            COALESCE(dep.nombre, 0) AS nombre_depenses,
-           COALESCE(enc.loyers, 0) + COALESCE(enc.charges, 0) + COALESCE(ar.autres, 0) - COALESCE(dep.depenses, 0) AS resultat_net,
+           COALESCE(communes.montant, 0) AS charges_communes,
+           COALESCE(enc.loyers, 0) + COALESCE(enc.charges, 0) + COALESCE(ar.autres, 0) - COALESCE(dep.depenses, 0) - COALESCE(communes.montant, 0) AS resultat_net,
            LEAST(COALESCE(occ.jours, 0), :jours) AS jours_occupation
       FROM apartments a
       JOIN buildings b ON b.id = a.building_id
@@ -462,6 +478,7 @@ const sqlRentabilite = (ordre) => `
       LEFT JOIN ar ON ar.apartment_id = a.id
       LEFT JOIN dep ON dep.apartment_id = a.id
       LEFT JOIN occ ON occ.apartment_id = a.id
+      LEFT JOIN communes ON communes.apartment_id = a.id
      WHERE a.owner_id = :ownerId AND a.deleted_at IS NULL AND ${IMMEUBLE('a.building_id')}
   )
   SELECT *, round(100.0 * jours_occupation / :jours, 1)::float AS taux_occupation,

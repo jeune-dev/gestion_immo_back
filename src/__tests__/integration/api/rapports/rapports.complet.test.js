@@ -84,19 +84,19 @@ describe('Rapports — jeu de données construit par l’API', () => {
     const r = res.body.data.rapport;
     expect(r.periode).toEqual({ du: DU, au: JOUR, jours: 41 });
     expect(r.revenus).toEqual({ loyers: 350000, charges_recuperees: 0, autres_revenus: 10000, total: 360000 });
-    expect(r.depenses.total).toBe(45000);
-    expect(r.depenses.par_categorie.map((c) => [c.code, c.total, c.nombre])).toEqual([['travaux', 40000, 1], ['nettoyage', 5000, 1]]);
-    expect(r.benefice_net).toBe(315000);
+    expect(r.depenses.total).toBe(105000);
+    expect(r.depenses.par_categorie.map((c) => [c.code, c.total, c.nombre])).toEqual([['facture_eau', 60000, 1], ['travaux', 40000, 1], ['nettoyage', 5000, 1]]);
+    expect(r.benefice_net).toBe(255000);
     expect(r.charges).toEqual({
-      nombre_factures: 1, factures_total: 60000, refacturees_locataires: 30000, recuperees_locataires: 0, reste_a_recouvrer: 30000, a_charge_proprietaire: 30000,
+      nombre_factures: 1, factures_total: 60000, refacturees_locataires: 30000, recuperees_locataires: 0, reste_a_recouvrer: 30000, provisions_deduites: 0, a_charge_proprietaire: 30000,
     });
     expect(r.par_immeuble).toHaveLength(1);
-    expect(r.par_immeuble[0]).toMatchObject({ building_id: bail.building.id, revenus: { total: 360000 }, depenses: 45000, benefice_net: 315000 });
+    expect(r.par_immeuble[0]).toMatchObject({ building_id: bail.building.id, revenus: { total: 360000 }, depenses: 105000, benefice_net: 255000 });
     // Impayés à la date de fin, recalculés indépendamment depuis les échéances et allocations.
     const [{ attendu }] = await q(`
       SELECT COALESCE(sum(rs.amount_due - COALESCE((SELECT sum(pa.amount) FROM payment_allocations pa JOIN rent_payments rp ON rp.id = pa.rent_payment_id
                                                      WHERE pa.rent_schedule_id = rs.id AND pa.reversed_at IS NULL AND rp.status = 'valide' AND rp.paid_on <= :au), 0)), 0)::bigint AS attendu
-        FROM rent_schedules rs WHERE rs.owner_id = :o AND rs.status <> 'annule' AND rs.due_date <= :au`, { o: p.ownerId, au: JOUR });
+        FROM rent_schedules rs WHERE rs.owner_id = :o AND rs.status <> 'annule' AND rs.due_date < :au`, { o: p.ownerId, au: JOUR });
     expect(r.impayes.montant).toBe(attendu);
   });
 
@@ -130,8 +130,8 @@ describe('Rapports — jeu de données construit par l’API', () => {
     const res = await api().get(`${R}/rentabilite`).query(PERIODE).set(p.h);
     expect(res.status).toBe(200);
     const lignes = Object.fromEntries(res.body.data.items.map((l) => [l.apartment_number, l]));
-    expect(lignes['=1+1']).toMatchObject({ loyers: 350000, revenus: 350000, depenses: 0, resultat_net: 350000, rang: 1 });
-    expect(lignes.VIDE).toMatchObject({ loyers: 0, autres_revenus: 10000, depenses: 40000, resultat_net: -30000, rang: 2, jours_occupation: 0, taux_occupation: 0 });
+    expect(lignes['=1+1']).toMatchObject({ loyers: 350000, revenus: 350000, depenses: 0, charges_communes: 30000, resultat_net: 320000, rang: 1 });
+    expect(lignes.VIDE).toMatchObject({ loyers: 0, autres_revenus: 10000, depenses: 40000, charges_communes: 30000, resultat_net: -60000, rang: 2, jours_occupation: 0, taux_occupation: 0 });
     const ordre = async (tri) => (await api().get(`${R}/rentabilite`).query({ ...PERIODE, tri }).set(p.h)).body.data.items.map((l) => l.apartment_number);
     expect(await ordre('resultat_net')).toEqual(['VIDE', '=1+1']);
     expect(await ordre('-depenses')).toEqual(['VIDE', '=1+1']);
@@ -172,7 +172,7 @@ describe('Rapports — jeu de données construit par l’API', () => {
       const valeur = (libelle) => lignes.find((l) => l[0] === libelle)?.[1];
       expect(valeur('Loyers encaissés')).toBe('350000');
       expect(valeur('Total des revenus (hors caution)')).toBe('360000');
-      expect(valeur('Bénéfice net')).toBe('315000');
+      expect(valeur('Bénéfice net')).toBe('255000');
       expect(valeur('Charges à la charge du propriétaire')).toBe('30000');
       expect(lignes.some((l) => l[0] === '\'=HYPERLINK("http://pirate";"clic")')).toBe(true);
     });

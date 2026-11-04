@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAUTS_PROPRIETAIRE } = require('../../../config/parametres.js');
+
 /**
  * Fragments SQL des INDICATEURS FINANCIERS, partagés par le tableau de bord
  * (§ 6, § 48) et les rapports (§ 26) : un même mot (« revenus », « impayés »)
@@ -14,7 +16,9 @@
  *     mouvements `is_deposit` n'entrent ici ;
  *   - dépenses = dépenses au statut `valide` dont `spent_on` est dans la période ;
  *   - impayés (état courant) = reste dû des échéances `en_retard`, plus celui
- *     des échéances partiellement payées déjà échues.
+ *     des échéances partiellement payées déjà échues ; les rapports appliquent
+ *     la même règle à leur date de fin, délai de grâce du propriétaire compris.
+ *     Les charges refacturées suivent la même règle et sont comptées à part.
  *
  * Tous les fragments sont des CONSTANTES du code : aucune valeur venant du
  * client n'y est concaténée, elles passent par les `replacements` nommés
@@ -31,6 +35,9 @@
  */
 const IMMEUBLE = (colonne) => `(CAST(:buildingId AS uuid) IS NULL OR ${colonne} = CAST(:buildingId AS uuid))`;
 
+/** Travaux considérés « en cours » (tableau de bord et rapports). */
+const STATUTS_TRAVAUX_EN_COURS = "('valide', 'artisan_assigne', 'en_cours')";
+
 /**
  * Bornes horaires d'une date calendaire dans le fuseau de l'application : les
  * colonnes `created_at` / `completed_at` sont des timestamptz, comparées par
@@ -39,6 +46,15 @@ const IMMEUBLE = (colonne) => `(CAST(:buildingId AS uuid) IS NULL OR ${colonne} 
  */
 const DEBUT_JOUR = (parametre) => `(CAST(${parametre} AS date)::timestamp AT TIME ZONE :fuseau)`;
 const FIN_JOUR = (parametre) => `((CAST(${parametre} AS date) + 1)::timestamp AT TIME ZONE :fuseau)`;
+
+/** Délai de grâce du propriétaire, en jours (même défaut que le statut des échéances). */
+const GRACE = `(SELECT COALESCE((o.settings->>'late_grace_days')::int, ${Number(DEFAUTS_PROPRIETAIRE.late_grace_days)}) FROM owners o WHERE o.id = :ownerId)`;
+
+/** Échue et impayée à :au : retard au-delà de la grâce, ou partiellement payée et échue. */
+const IMPAYE_A_DATE = (echeance, paye) => `(CAST(:au AS date) - ${echeance} > ${GRACE} OR (${paye} > 0 AND ${echeance} < CAST(:au AS date)))`;
+
+/** Charge impayée à ce jour (alias `c`). */
+const CHARGE_IMPAYEE = `(c.status = 'en_retard' OR (c.status = 'partiellement_paye' AND c.due_date < CAST(:jour AS date)))`;
 
 /** Échéance impayée à ce jour (alias `rs`). */
 const ECHEANCE_IMPAYEE = `(rs.status = 'en_retard' OR (rs.status = 'partiellement_paye' AND rs.due_date < CAST(:jour AS date)))`;
@@ -99,8 +115,30 @@ const IMPAYES_A_DATE = `
     FROM rent_schedules rs
     JOIN apartments a ON a.id = rs.apartment_id
     LEFT JOIN paye_a_date p ON p.rent_schedule_id = rs.id
-   WHERE rs.owner_id = :ownerId AND rs.status <> 'annule' AND rs.due_date <= :au
+   WHERE rs.owner_id = :ownerId AND rs.status <> 'annule'
+     AND ${IMPAYE_A_DATE('rs.due_date', 'COALESCE(p.paye, 0)')}
      AND rs.amount_due - COALESCE(p.paye, 0) > 0
+     AND ${IMMEUBLE('a.building_id')}`;
+
+/** Même calcul pour les charges refacturées, à la date :au. */
+const CHARGES_IMPAYEES_A_DATE = `
+  WITH paye_a_date AS (
+    SELECT pa.charge_id, sum(pa.amount) AS paye
+      FROM payment_allocations pa
+      JOIN rent_payments rp ON rp.id = pa.rent_payment_id
+     WHERE pa.owner_id = :ownerId AND rp.owner_id = :ownerId
+       AND pa.charge_id IS NOT NULL AND pa.reversed_at IS NULL
+       AND rp.status = 'valide' AND rp.paid_on <= :au
+     GROUP BY pa.charge_id
+  )
+  SELECT c.id, c.tenant_id, c.apartment_id, a.building_id, c.due_date,
+         c.amount - COALESCE(p.paye, 0) AS reste
+    FROM charges c
+    JOIN apartments a ON a.id = c.apartment_id
+    LEFT JOIN paye_a_date p ON p.charge_id = c.id
+   WHERE c.owner_id = :ownerId AND c.status <> 'annule'
+     AND ${IMPAYE_A_DATE('c.due_date', 'COALESCE(p.paye, 0)')}
+     AND c.amount - COALESCE(p.paye, 0) > 0
      AND ${IMMEUBLE('a.building_id')}`;
 
 /**
@@ -133,7 +171,7 @@ function pourcentage(numerateur, denominateur) {
 }
 
 module.exports = {
-  IMMEUBLE, DEBUT_JOUR, FIN_JOUR, ECHEANCE_IMPAYEE,
-  ENCAISSEMENTS, AUTRES_REVENUS, DEPENSES, DEPENSES_PAR_CATEGORIE, IMPAYES_A_DATE, OCCUPATION,
+  IMMEUBLE, DEBUT_JOUR, FIN_JOUR, ECHEANCE_IMPAYEE, CHARGE_IMPAYEE, STATUTS_TRAVAUX_EN_COURS,
+  ENCAISSEMENTS, AUTRES_REVENUS, DEPENSES, DEPENSES_PAR_CATEGORIE, IMPAYES_A_DATE, CHARGES_IMPAYEES_A_DATE, OCCUPATION,
   pourcentage,
 };

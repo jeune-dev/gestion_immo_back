@@ -82,7 +82,7 @@ async function lister(ownerId, f, { limit, offset }) {
 async function detail(id, ownerId) {
   const charge = await chargerPourProprietaire(Charge, id, ownerId, { include: INCLUDE_LISTE }, 'Charge');
   const allocation = await ChargeAllocation.findByPk(charge.charge_allocation_id, {
-    attributes: ['id', 'basis_value', 'share', 'amount', 'explanation'],
+    attributes: ['id', 'basis_value', 'share', 'amount', 'provision_deducted', 'explanation'],
   });
   return {
     ...charge.toJSON(),
@@ -128,7 +128,7 @@ async function detailLocataire(id, tenantIds) {
   }, 'Charge');
 
   const [allocation, nbAppartements] = await Promise.all([
-    ChargeAllocation.findByPk(charge.charge_allocation_id, { attributes: ['basis_value', 'share', 'amount', 'explanation'] }),
+    ChargeAllocation.findByPk(charge.charge_allocation_id, { attributes: ['basis_value', 'share', 'amount', 'provision_deducted', 'explanation'] }),
     ChargeAllocation.count({ where: { charge_invoice_id: charge.charge_invoice_id } }),
   ]);
   const { invoice, apartment } = charge;
@@ -159,6 +159,7 @@ async function detailLocataire(id, tenantIds) {
       basis_value: allocation.basis_value,
       share: allocation.share,
       amount: allocation.amount,
+      provision_deducted: allocation.provision_deducted,
       explanation: allocation.explanation,
     },
   };

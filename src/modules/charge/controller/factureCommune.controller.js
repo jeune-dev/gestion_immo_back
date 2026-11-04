@@ -29,7 +29,7 @@ exports.apercuCorps = asyncHandler(async (req, res) =>
   ok(res, { allocation: await S.apercu(req.params.id, req.ownerId, req.body) }));
 
 exports.repartir = asyncHandler(async (req, res) =>
-  ok(res, { invoice: await S.repartir(req.params.id, req.ownerId, req.body) }, 'Facture répartie'));
+  ok(res, { invoice: await S.repartir(req.params.id, req.ownerId, req.user, req.body) }, 'Facture répartie'));
 
 exports.annuler = asyncHandler(async (req, res) =>
-  ok(res, { invoice: await S.annuler(req.params.id, req.ownerId, req.body.reason) }, 'Facture annulée'));
+  ok(res, { invoice: await S.annuler(req.params.id, req.ownerId, req.user, req.body.reason) }, 'Facture annulée'));

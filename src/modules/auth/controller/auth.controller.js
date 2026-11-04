@@ -101,6 +101,11 @@ exports.motDePasseOublie = asyncHandler(async (req, res) => {
   return ok(res, null, 'Si un compte correspond, un code de réinitialisation a été envoyé.');
 });
 
+exports.verifierCode = asyncHandler(async (req, res) => {
+  await AuthService.verifierCodeReinitialisation(req.body);
+  return ok(res, null, 'Code vérifié. Choisissez votre nouveau mot de passe.');
+});
+
 exports.reinitialiser = asyncHandler(async (req, res) => {
   await AuthService.reinitialiserMotDePasse(req.body);
   return ok(res, null, 'Mot de passe réinitialisé. Vous pouvez vous connecter.');

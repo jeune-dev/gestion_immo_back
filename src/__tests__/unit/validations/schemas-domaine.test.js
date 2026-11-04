@@ -43,10 +43,16 @@ describe('auth.validation', () => {
     expect(valider(auth.connexionSchema, { identifiant: 'a@b.sn', password: 'x', platform: 'symbian' }).error).toBeDefined();
   });
 
-  test('réinitialisation : code à exactement 6 chiffres', () => {
+  test('réinitialisation et vérification : code de 8 lettres ou chiffres, casse et espaces indifférents', () => {
     const base = { identifiant: 'a@b.sn', password: MDP, password_confirmation: MDP };
-    expect(valider(auth.reinitialisationSchema, { ...base, code: '012345' }).error).toBeUndefined();
-    for (const code of ['12345', '1234567', 'abcdef', '12 345']) expect(valider(auth.reinitialisationSchema, { ...base, code }).error).toBeDefined();
+    const ok = valider(auth.reinitialisationSchema, { ...base, code: 'k7p2 qx9m' });
+    expect(ok.error).toBeUndefined();
+    expect(ok.value.code).toBe('K7P2QX9M');
+    expect(valider(auth.verificationCodeSchema, { identifiant: 'a@b.sn', code: '0123ABCD' }).error).toBeUndefined();
+    for (const code of ['1234567', '123456789', 'ABCD-123', 'ABCDÉ123', '']) {
+      expect(valider(auth.reinitialisationSchema, { ...base, code }).error).toBeDefined();
+      expect(valider(auth.verificationCodeSchema, { identifiant: 'a@b.sn', code }).error).toBeDefined();
+    }
   });
 
   test('activation : code XOR lien ; code exige le téléphone ; code à 8 chiffres', () => {

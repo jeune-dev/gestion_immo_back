@@ -72,6 +72,6 @@ describe('E2E — fin de bail et restitution de la caution', () => {
     const rapport = (await api().get('/api/v1/rapports/financier?du=2026-01-01&au=2026-12-31').set(p.h)).body.data;
     expect((rapport.rapport || rapport).revenus.total).toBe(sept.amount_due + oct.amount_due);
     const caisse = (await api().get('/api/v1/caisse/synthese?du=2026-01-01&au=2026-12-31').set(p.h)).body.data.caisse;
-    expect(caisse.cautions).toEqual({ recues: 700000, restituees: 660000, solde: 40000 });
+    expect(caisse.cautions).toEqual({ recues: 700000, restituees: 660000, retenues: 40000, solde: 0 });
   });
 });

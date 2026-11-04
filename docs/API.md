@@ -24,7 +24,9 @@ Générée depuis le routeur réel : `npm run doc:routes` (262 routes).
 | Désactiver la double authentification d'un super admin | **403 MFA_OBLIGATOIRE** |
 | Code TOTP faux, rejoué ou expiré | **401 CODE_MFA_INVALIDE** (compte bloqué 15 min après 5 échecs) |
 | Mot de passe oublié pour un super admin | réponse identique, aucun code envoyé — accès rétabli par un autre super admin (`POST /admin/utilisateurs/:id/reinitialiser-acces`) |
-| Compte bloqué après des échecs | **401 IDENTIFIANTS_INVALIDES**, message identique à un mot de passe faux (plus de 403 révélateur) |
+| Mot de passe faux | **401 IDENTIFIANTS_INVALIDES** ; aux 2 derniers essais avant blocage, le message prévient (« encore N essais ») |
+| Compte bloqué après des échecs (5 erreurs → 1 min, puis 5 min, puis 15 min) | **429 COMPTE_BLOQUE**, message avec le délai réel + en-tête `Retry-After` ; levé par « mot de passe oublié » |
+| Trop d'échecs depuis la même IP (30 / 15 min, réussites non comptées) | **429 TROP_DE_REQUETES**, délai restant dans le message + `Retry-After` |
 | Session au-delà de sa durée maximale (90 j ; super admin 12 h) | **401** au rafraîchissement, nouvelle connexion |
 | Téléversements : trop d'envois simultanés / serveur saturé | **429 TELEVERSEMENTS_SIMULTANES** / **503 TELEVERSEMENTS_SATURES** (Retry-After) |
 | Export CSV au-delà de `EXPORT_MAX_LIGNES` | **422 EXPORT_TROP_VOLUMINEUX** |
@@ -79,6 +81,7 @@ Variables d'exploitation : `RELANCES_TAILLE_LOT` (défaut 1000) — les relances
 | POST | `/api/v1/auth/refresh` |
 | POST | `/api/v1/auth/deconnexion` |
 | POST | `/api/v1/auth/mot-de-passe-oublie` |
+| POST | `/api/v1/auth/verifier-code` |
 | POST | `/api/v1/auth/reinitialiser-mot-de-passe` |
 | POST | `/api/v1/auth/locataire/activation` |
 

@@ -4,6 +4,7 @@ const router = require('express').Router();
 const auth = require('./middlewares/auth.middleware.js');
 const { requireProprietaire, requireLocataire, requireRole } = require('./middlewares/acces.middleware.js');
 const { exigerAbonnementPourEcrire } = require('./middlewares/abonnement.middleware.js');
+const rafraichirTableauDeBord = require('./middlewares/tableauDeBord.middleware.js');
 const { authenticatedRateLimit, adminRateLimit, webhookRateLimit } = require('./middlewares/rateLimit.middleware.js');
 
 /**
@@ -19,7 +20,7 @@ const { authenticatedRateLimit, adminRateLimit, webhookRateLimit } = require('./
  *   super admin         : auth → limite admin → rôle super_admin → permission
  */
 
-const espaceProprietaire = [auth, authenticatedRateLimit, requireProprietaire, exigerAbonnementPourEcrire];
+const espaceProprietaire = [auth, authenticatedRateLimit, requireProprietaire, exigerAbonnementPourEcrire, rafraichirTableauDeBord];
 const espaceLocataire = [auth, authenticatedRateLimit, requireLocataire];
 const espaceAdmin = [auth, adminRateLimit, requireRole('super_admin')];
 const authentifie = [auth, authenticatedRateLimit];

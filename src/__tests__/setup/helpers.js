@@ -5,6 +5,7 @@
  * patrimoine et des baux créés PAR L'API (mêmes chemins que le mobile).
  */
 const crypto = require('crypto');
+const http = require('http');
 const request = require('supertest');
 const app = require('../../app.js');
 const sequelize = require('../../config/db.js');
@@ -83,8 +84,20 @@ function bailRelatif(r = reperes()) {
  * brute (`apiBrute()`), sans clé.
  */
 const ROUTES_IDEMPOTENCE_OBLIGATOIRE = /^\/api\/v1\/(paiements\/(especes|[^/]+\/rembourser)|cautions\/[^/]+\/(versements|retenues|restitutions))$/;
+/**
+ * UN serveur HTTP par fichier de test, partagé par toutes les requêtes.
+ * `request(app)` en démarrait un sur un port neuf à CHAQUE requête : sur des
+ * fichiers de plus de mille requêtes, ce va-et-vient de ports coupait parfois
+ * une connexion (« socket hang up », ECONNRESET). `unref` : il ne retient
+ * jamais Jest ; `fermer()` le libère.
+ */
+let serveur = null;
+const cible = () => {
+  if (!serveur) serveur = http.createServer(app).listen(0).unref();
+  return serveur;
+};
 const api = () => {
-  const agent = request(app);
+  const agent = request(cible());
   const post = agent.post.bind(agent);
   agent.post = (url) => {
     const test = post(url);
@@ -92,7 +105,7 @@ const api = () => {
   };
   return agent;
 };
-const apiBrute = () => request(app);
+const apiBrute = () => request(cible());
 const MOT_DE_PASSE = 'MotDePasse1';
 
 /**
@@ -283,6 +296,10 @@ async function fermer() {
   // sinon elles écrivent pendant le fichier de tests suivant — le worker est
   // le même processus — et faussent ses décomptes.
   await arrierePlan.attendre();
+  if (serveur) {
+    await new Promise((fin) => serveur.close(fin));
+    serveur = null;
+  }
   await sequelize.close();
 }
 

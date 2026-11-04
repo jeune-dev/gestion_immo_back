@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, MOT_DE_PASSE, nouveauProprietaire, telephoneUnique, emailUnique, compter, fermer, sequelize,
+  api, MOT_DE_PASSE, nouveauProprietaire, superAdmin, telephoneUnique, emailUnique, compter, fermer, sequelize,
 } = require('../../../setup/helpers.js');
 const sessions = require('../../../../modules/auth/service/session.service.js');
 
@@ -224,32 +224,72 @@ describe('Auth — connexion', () => {
     expect(apres).toEqual({ failed_login_attempts: 0, locked_until: null });
   });
 
-  test('verrouillage : 5 échecs → bloqué, audit, levé après expiration ; CORRECTIF M4 : réponse identique à un mot de passe faux', async () => {
+  test('verrouillage : avertissement avant blocage, 5e échec → bloqué 1 minute avec le délai annoncé, audit, levé après expiration', async () => {
     const p = await nouveauProprietaire();
-    for (let i = 0; i < 5; i += 1) expect((await connecter(p.identifiants.email, 'Mauvais123')).status).toBe(401);
-    const faux = await connecter(p.identifiants.email, 'Mauvais123');
-    const bloque = await connecter(p.identifiants.email);
-    expect(bloque.status).toBe(401);
-    expect(bloque.body.error.code).toBe('IDENTIFIANTS_INVALIDES');
-    // Rien ne distingue « bloqué » de « mot de passe faux » ni de « compte inconnu ».
     const inconnu = await connecter(`inconnu.${Date.now()}@test.sn`);
-    for (const r of [faux, inconnu]) {
-      expect(r.status).toBe(bloque.status);
-      expect(r.body.message).toBe(bloque.body.message);
-      expect(r.body.error.code).toBe(bloque.body.error.code);
-      expect(r.body.error).not.toHaveProperty('details');
-    }
+    const essais = [];
+    for (let i = 0; i < 4; i += 1) essais.push(await connecter(p.identifiants.email, 'Mauvais123'));
+    // Les premiers échecs ressemblent à un compte inconnu ; les deux derniers préviennent.
+    expect(essais.map((r) => r.status)).toEqual([401, 401, 401, 401]);
+    expect(essais[0].body.message).toBe(inconnu.body.message);
+    expect(essais[2].body.message).toMatch(/encore 2 essais avant un blocage/);
+    expect(essais[3].body.message).toMatch(/encore 1 essai avant un blocage/);
+
+    const cinquieme = await connecter(p.identifiants.email, 'Mauvais123');
+    expect(cinquieme.status).toBe(429);
+    expect(cinquieme.body.error.code).toBe('COMPTE_BLOQUE');
+    expect(cinquieme.body.message).toMatch(/bloqué pendant 1 minute/);
+    expect(Number(cinquieme.headers['retry-after'])).toBeGreaterThan(0);
+    expect(Number(cinquieme.headers['retry-after'])).toBeLessThanOrEqual(60);
+
+    // Même le bon mot de passe est refusé, avec le délai restant.
+    const bloque = await connecter(p.identifiants.email);
+    expect(bloque.status).toBe(429);
+    expect(bloque.body.error.code).toBe('COMPTE_BLOQUE');
+    expect(bloque.body.message).toMatch(/Mot de passe oublié/);
+    // Compte sans e-mail : « mot de passe oublié » n'est pas proposé (le code part par e-mail).
+    await sequelize.query("UPDATE users SET email = NULL, locked_until = now() + interval '3 minutes' WHERE id = :u", { replacements: { u: p.user.id } });
+    const sansEmail = await connecter(p.identifiants.phone);
+    expect(sansEmail.status).toBe(429);
+    expect(sansEmail.body.message).toMatch(/bloqué pendant 3 minutes\. Réessayez ensuite\.$/);
+    await sequelize.query("UPDATE users SET email = :e WHERE id = :u", { replacements: { u: p.user.id, e: p.identifiants.email } });
     expect(await compter('audit_logs', "action = 'compte.verrouillage' AND entity_id = :u", { u: p.user.id })).toBe(1);
-    // Expiration du blocage : la connexion redevient possible.
-    await sequelize.query("UPDATE users SET locked_until = now() - interval '1 minute' WHERE id = :u", { replacements: { u: p.user.id } });
+
+    // Expiration du blocage : la connexion redevient possible et remet tout à zéro.
+    await sequelize.query("UPDATE users SET locked_until = now() - interval '1 second' WHERE id = :u", { replacements: { u: p.user.id } });
     expect((await connecter(p.identifiants.email)).status).toBe(200);
+    const [[apres]] = await sequelize.query('SELECT failed_login_attempts, locked_until FROM users WHERE id = :u', { replacements: { u: p.user.id } });
+    expect(apres).toEqual({ failed_login_attempts: 0, locked_until: null });
+  });
+
+  test('verrouillage progressif : 1 min, puis 5 min, puis 15 min (dernier palier répété)', async () => {
+    const p = await nouveauProprietaire();
+    const serie = async () => {
+      let derniere;
+      for (let i = 0; i < 5; i += 1) derniere = await connecter(p.identifiants.email, 'Mauvais123');
+      expect(derniere.status).toBe(429);
+      const s = Number(derniere.headers['retry-after']);
+      await sequelize.query("UPDATE users SET locked_until = now() - interval '1 second' WHERE id = :u", { replacements: { u: p.user.id } });
+      return s;
+    };
+    const s1 = await serie();
+    const s2 = await serie();
+    const s3 = await serie();
+    const s4 = await serie();
+    expect(s1).toBeLessThanOrEqual(60);
+    expect(s2).toBeGreaterThan(240);
+    expect(s2).toBeLessThanOrEqual(300);
+    expect(s3).toBeGreaterThan(840);
+    expect(s3).toBeLessThanOrEqual(900);
+    expect(s4).toBeGreaterThan(840);
+    expect(await compter('audit_logs', "action = 'compte.verrouillage' AND entity_id = :u", { u: p.user.id })).toBe(4);
   });
 
   test('verrouillage : 5 échecs SIMULTANÉS comptent tous (incrément atomique)', async () => {
     const p = await nouveauProprietaire();
     await Promise.all(Array.from({ length: 5 }, () => connecter(p.identifiants.email, 'Mauvais123')));
-    // Bloqué : même le bon mot de passe est refusé (réponse générique).
-    expect((await connecter(p.identifiants.email)).body.error.code).toBe('IDENTIFIANTS_INVALIDES');
+    // Bloqué : même le bon mot de passe est refusé.
+    expect((await connecter(p.identifiants.email)).body.error.code).toBe('COMPTE_BLOQUE');
     expect((await sequelize.query('SELECT locked_until FROM users WHERE id = :u', { replacements: { u: p.user.id } }))[0][0].locked_until).not.toBeNull();
   });
 

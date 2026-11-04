@@ -122,6 +122,7 @@ async function creerDansTransaction(t, ownerId, user, d) {
     description: d.description || null,
     contractor_id: d.contractor_id || null,
     work_order_id: d.work_order_id || null,
+    charge_invoice_id: d.charge_invoice_id || null,
     client_reference: d.client_reference || null,
     status: 'valide',
     created_by: user.id,
@@ -257,14 +258,22 @@ async function annuler(id, ownerId, user, motif) {
   return sequelize.transaction(async (t) => {
     const expense = await chargerPourProprietaire(Expense, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, 'Dépense');
     if (expense.status === 'annulee') throw new ConflictError('Cette dépense est déjà annulée.', 'DEJA_ANNULEE');
-    await expense.update({ status: 'annulee', cancelled_at: new Date(), cancel_reason: motif, cancelled_by: user.id }, { transaction: t });
-    const mouvements = await caisse.annulerParSource(t, 'expense', id);
-    await journaliser({
-      action: 'depense.changement_statut', entityType: 'expense', entityId: id, ownerId,
-      details: { avant: 'valide', apres: 'annulee', motif, montant: expense.amount, mouvements_caisse_annules: mouvements },
-    }, t);
-    return expense;
+    if (expense.charge_invoice_id) {
+      throw new ConflictError('Cette dépense vient d’une facture commune : annulez la facture.', 'DEPENSE_DE_FACTURE');
+    }
+    return annulerDansTransaction(t, expense, user, motif);
   }).then((e) => chargerPropre(e.id, ownerId));
+}
+
+/** Annule une dépense verrouillée et sa sortie de caisse, dans la transaction de l'appelant. */
+async function annulerDansTransaction(t, expense, user, motif) {
+  await expense.update({ status: 'annulee', cancelled_at: new Date(), cancel_reason: motif, cancelled_by: user.id }, { transaction: t });
+  const mouvements = await caisse.annulerParSource(t, 'expense', expense.id);
+  await journaliser({
+    action: 'depense.changement_statut', entityType: 'expense', entityId: expense.id, ownerId: expense.owner_id,
+    details: { avant: 'valide', apres: 'annulee', motif, montant: expense.amount, mouvements_caisse_annules: mouvements },
+  }, t);
+  return expense;
 }
 
 /** Justificatif (§ 20 « Justificatif : photo ») : image ou PDF. */
@@ -280,5 +289,5 @@ async function ajouterJustificatif(id, ownerId, user, fichier) {
 }
 
 module.exports = {
-  lister, detail, creer, creerPourTravaux, modifier, annuler, ajouterJustificatif, GROUPE_VERS_CAISSE,
+  lister, detail, creer, creerPourTravaux, creerDansTransaction, modifier, annuler, annulerDansTransaction, ajouterJustificatif, GROUPE_VERS_CAISSE,
 };

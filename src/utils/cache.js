@@ -114,8 +114,15 @@ const volUnique = (cle, calcul) => {
   return promesse;
 };
 
+/** Oublie les chiffres du tableau de bord d'un propriétaire après une écriture. */
+const invaliderTableauDeBord = async (ownerId) => {
+  if (!ownerId) return;
+  await invalider(`dashboard:${ownerId}:*`);
+  await invalider(`dashboard-graphiques:${ownerId}:*`);
+};
+
 module.exports = {
-  lire, ecrire, invalider, volUnique,
+  lire, ecrire, invalider, volUnique, invaliderTableauDeBord,
   // Exposé pour les tests : taille du repli mémoire et remise à zéro.
   _memoire: { taille: () => memoire.size, vider: () => memoire.clear(), MAX_ENTREES_MEMOIRE },
 };

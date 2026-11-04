@@ -4,6 +4,7 @@ const {
   api, bearer, MOT_DE_PASSE, nouveauProprietaire, superAdmin, codeTotp, emailUnique, compter, fermer, sequelize,
 } = require('../../../setup/helpers.js');
 const totp = require('../../../../utils/totp.js');
+const email = require('../../../../infrastructure/email.service.js');
 
 /**
  * CORRECTIFS E1 / M3 de l'audit de sécurité — double authentification (TOTP)
@@ -96,11 +97,12 @@ describe('Super admin : double authentification obligatoire', () => {
     const { mfa_token: jeton } = (await connexion(admin.email)).body.data;
     const bon = codeTotp(admin.secret, 1);
     const faux = (i) => String((Number(bon) + 1000 + i) % 1_000_000).padStart(6, '0');
-    for (let i = 0; i < 5; i += 1) expect((await etapeCode({ mfa_token: jeton, code: faux(i) })).status).toBe(401);
+    for (let i = 0; i < 4; i += 1) expect((await etapeCode({ mfa_token: jeton, code: faux(i) })).status).toBe(401);
+    expect((await etapeCode({ mfa_token: jeton, code: faux(4) })).body.error.code).toBe('COMPTE_BLOQUE');
     expect((await ligneUser(admin.user.id)).locked_until).not.toBeNull();
-    expect((await etapeCode({ mfa_token: jeton, code: bon })).status).toBe(401);
+    expect((await etapeCode({ mfa_token: jeton, code: bon })).status).toBe(429);
     // Se reconnecter par mot de passe ne remet PAS le compteur à zéro (pas de contournement).
-    expect((await connexion(admin.email)).status).toBe(401);
+    expect((await connexion(admin.email)).status).toBe(429);
   });
 
   test('10 codes faux simultanés : jamais plus que le plafond d’essais', async () => {
@@ -108,7 +110,7 @@ describe('Super admin : double authentification obligatoire', () => {
     const { mfa_token: jeton } = (await connexion(admin.email)).body.data;
     const bon = codeTotp(admin.secret, 1);
     await Promise.all(Array.from({ length: 10 }, (_, i) => etapeCode({ mfa_token: jeton, code: String((Number(bon) + 7 + i) % 1_000_000).padStart(6, '0') })));
-    expect((await etapeCode({ mfa_token: jeton, code: bon })).status).toBe(401);
+    expect((await etapeCode({ mfa_token: jeton, code: bon })).body.error.code).toBe('COMPTE_BLOQUE');
   });
 
   test('jeton intermédiaire falsifié, d’un autre type ou périmé (session révoquée) → 401 JETON_MFA_INVALIDE', async () => {
@@ -143,20 +145,36 @@ describe('Super admin : double authentification obligatoire', () => {
     expect((await ligneUser(admin.user.id)).totp_enabled_at).not.toBeNull();
   });
 
-  test('mot de passe oublié : aucune réinitialisation par e-mail pour un super admin (réponse identique)', async () => {
+  test('mot de passe oublié par e-mail (comme Yobante) : le super admin choisit un nouveau mot de passe, sa double authentification est à reconfigurer', async () => {
     const admin = await superAdmin();
-    const p = await nouveauProprietaire();
-    const pourAdmin = await api().post('/api/v1/auth/mot-de-passe-oublie').send({ identifiant: admin.email });
-    const pourProprio = await api().post('/api/v1/auth/mot-de-passe-oublie').send({ identifiant: p.identifiants.email });
-    expect(pourAdmin.status).toBe(pourProprio.status);
-    expect(pourAdmin.body.message).toBe(pourProprio.body.message);
-    expect(await compter('password_resets', 'user_id = :u', { u: admin.user.id })).toBe(0);
-    expect(await compter('password_resets', 'user_id = :u', { u: p.user.id })).toBe(1);
-    expect(await compter('audit_logs', "action = 'compte.reinitialisation_refusee' AND entity_id = :u", { u: admin.user.id })).toBe(1);
-    // Même avec une demande forgée en base, la réinitialisation est refusée.
-    const res = await api().post('/api/v1/auth/reinitialiser-mot-de-passe')
-      .send({ identifiant: admin.email, code: '123456', password: MDP_FORT, password_confirmation: MDP_FORT });
-    expect(res.status).toBe(400);
+    const envoi = jest.spyOn(email, 'envoyerCodeReinitialisation').mockResolvedValue({ envoye: true });
+    try {
+      expect((await api().post('/api/v1/auth/mot-de-passe-oublie').send({ identifiant: admin.email })).status).toBe(200);
+      const code = envoi.mock.calls.at(-1)[0].code;
+      expect(code).toMatch(/^[A-Z0-9]{8}$/);
+      expect(await compter('audit_logs', "action = 'compte.reinitialisation_demandee' AND entity_id = :u", { u: admin.user.id })).toBe(1);
+      expect((await api().post('/api/v1/auth/verifier-code').send({ identifiant: admin.email, code })).status).toBe(200);
+      // Politique renforcée du super admin : mot de passe simple refusé, code conservé.
+      const faible = await api().post('/api/v1/auth/reinitialiser-mot-de-passe')
+        .send({ identifiant: admin.email, code, password: 'Password123', password_confirmation: 'Password123' });
+      expect(faible.status).toBe(422);
+      expect(faible.body.error.code).toBe('MOT_DE_PASSE_TROP_FAIBLE');
+      const res = await api().post('/api/v1/auth/reinitialiser-mot-de-passe')
+        .send({ identifiant: admin.email, code, password: MDP_FORT, password_confirmation: MDP_FORT });
+      expect(res.status).toBe(200);
+    } finally {
+      envoi.mockRestore();
+    }
+    const ligne = await ligneUser(admin.user.id);
+    expect(ligne.totp_enabled_at).toBeNull();
+    expect(ligne.totp_secret).toBeNull();
+    // Anciennes sessions fermées ; nouvelle connexion directe, puis configuration obligatoire de la double authentification.
+    expect((await api().get(COMPTE).set(admin.h)).status).toBe(401);
+    const connexion = await api().post('/api/v1/auth/connexion').send({ identifiant: admin.email, password: MDP_FORT });
+    expect(connexion.status).toBe(200);
+    const bloque = await api().get('/api/v1/admin/dashboard').set(bearer(connexion.body.data.access_token));
+    expect(bloque.status).toBe(403);
+    expect(bloque.body.error.code).toBe('MFA_REQUISE');
   });
 
   test('changement de mot de passe : politique renforcée maintenue, identique refusé', async () => {

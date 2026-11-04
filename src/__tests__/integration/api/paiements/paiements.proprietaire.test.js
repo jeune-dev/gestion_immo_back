@@ -248,15 +248,16 @@ describe('Paiements — espace propriétaire', () => {
       expect((await payerEspeces(p, lease.id, 1000, { paidOn: '2026-09-05' })).payment.reference).toBe('PAY-20260905-001');
     });
 
-    test('échéance déjà payée ciblée : le montant va à l’échéance ouverte suivante (FIFO)', async () => {
+    test('échéance déjà payée ciblée : 409, rien ne glisse sur l’échéance suivante', async () => {
       const p = await nouveauProprietaire();
       const { lease } = await bailActif(p);
       const [sept, oct] = await echeancesDu(p, lease.id);
       await payerEspeces(p, lease.id, 350000, { scheduleId: sept.id });
       const res = await especes(p, { lease_id: lease.id, rent_schedule_id: sept.id, amount: 100000, paid_on: '2026-09-06' });
-      expect(res.status).toBe(201);
-      expect(res.body.data.allocations).toEqual([expect.objectContaining({ rent_schedule_id: oct.id, amount: 100000 })]);
-      expect(res.body.data.receipts).toHaveLength(0);
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('DEJA_PAYE');
+      const suivante = await ligne('SELECT amount_paid FROM rent_schedules WHERE id = :id', { id: oct.id });
+      expect(suivante.amount_paid).toBe(0);
     });
 
     test('paiement non ciblé : imputé de la plus ancienne à la plus récente échéance', async () => {
@@ -287,15 +288,17 @@ describe('Paiements — espace propriétaire', () => {
       const { lease } = await bailActif(p);
       const [sept] = await echeancesDu(p, lease.id);
       const reponses = await Promise.all(Array.from({ length: 5 }, () => especes(p, { lease_id: lease.id, rent_schedule_id: sept.id, amount: 200000, paid_on: '2026-09-05' })));
-      expect(reponses.every((r) => r.status === 201)).toBe(true);
+      // 200 000 + 200 000 soldent l'échéance (150 000 passent sur la suivante) ; les autres trouvent une échéance soldée.
+      expect(reponses.filter((r) => r.status === 201)).toHaveLength(2);
+      expect(reponses.filter((r) => r.status === 409)).toHaveLength(3);
       const { allocs } = await ligne('SELECT COALESCE(sum(amount), 0)::int AS allocs FROM payment_allocations WHERE owner_id = :o AND reversed_at IS NULL', { o: p.ownerId });
       const { payes } = await ligne('SELECT sum(amount_paid)::int AS payes FROM rent_schedules WHERE lease_id = :l', { l: lease.id });
       const depassements = await compter('rent_schedules', 'lease_id = :l AND amount_paid > amount_due', { l: lease.id });
-      expect(allocs).toBe(1000000);
-      expect(payes).toBe(1000000);
+      expect(allocs).toBe(400000);
+      expect(payes).toBe(400000);
       expect(depassements).toBe(0);
-      expect(await soldeCaisse(p.ownerId)).toEqual({ entrees: 1000000, sorties: 0 });
-      expect(await compter('receipts', 'lease_id = :l AND cancelled_at IS NULL', { l: lease.id })).toBe(2);
+      expect(await soldeCaisse(p.ownerId)).toEqual({ entrees: 400000, sorties: 0 });
+      expect(await compter('receipts', 'lease_id = :l AND cancelled_at IS NULL', { l: lease.id })).toBe(1);
     });
 
     test('§ 44 double clic avec la même clé : clé d’idempotence invalide → 422 ; clé réutilisée pour un autre corps → 422', async () => {

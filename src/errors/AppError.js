@@ -49,6 +49,16 @@ class ValidationError extends AppError {
   constructor(message = 'Données invalides', details = [], code = null) { super(message, 422, true, code, details); }
 }
 
+/**
+ * Compte temporairement bloqué après trop d'essais incorrects : 429 avec
+ * `Retry-After`, pour que le client affiche le temps d'attente réel.
+ */
+class CompteBloqueError extends AppError {
+  constructor(message, reessayerDansS) {
+    super(message, 429, true, 'COMPTE_BLOQUE', { reessayer_dans_s: reessayerDansS });
+  }
+}
+
 /** Dépendance externe indisponible (base, fournisseur de paiement, stockage…). */
 class ServiceIndisponibleError extends AppError {
   constructor(message = 'Service temporairement indisponible', code = 'SERVICE_INDISPONIBLE', details = null) {
@@ -65,5 +75,6 @@ module.exports = {
   NotFoundError,
   ConflictError,
   ValidationError,
+  CompteBloqueError,
   ServiceIndisponibleError,
 };

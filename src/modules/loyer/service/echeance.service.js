@@ -201,7 +201,10 @@ async function lister(ownerId, f, { limit, offset }) {
   const where = { owner_id: ownerId };
   for (const cle of ['lease_id', 'tenant_id', 'apartment_id']) if (f[cle]) where[cle] = f[cle];
   if (f.status) where.status = f.status;
-  if (f.impayes) where.status = { [Op.in]: ['en_retard', 'partiellement_paye'] };
+  // Même définition que le KPI « Impayés » : un paiement partiel pas encore échu n'en est pas un.
+  if (f.impayes) {
+    where[Op.or] = [{ status: 'en_retard' }, { status: 'partiellement_paye', due_date: { [Op.lt]: aujourdhui() } }];
+  }
   const p = periode(f.du, f.au);
   if (p) where.due_date = p;
   const include = INCLUDE_LISTE.map((i) => ({ ...i }));

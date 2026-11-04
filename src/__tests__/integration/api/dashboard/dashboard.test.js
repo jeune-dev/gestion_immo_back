@@ -224,7 +224,7 @@ describe('Tableau de bord (§ 6, § 48)', () => {
     expect(d.qui_n_a_pas_paye.total_debiteurs).toBe(1);
     expect(d.qui_n_a_pas_paye.locataires).toHaveLength(1);
     expect(d.qui_n_a_pas_paye.locataires[0]).toMatchObject({
-      tenant_id: a1.tenant.id, apartment_id: a1.apartment.id, montant: 500000, echeances: 2, plus_ancienne_echeance: `${P}-20`,
+      tenant_id: a1.tenant.id, apartment_id: a1.apartment.id, montant: 535000, echeances: 3, plus_ancienne_echeance: `${P}-20`,
     });
 
     expect(d.appartement_le_plus_couteux.map((x) => [x.apartment_id, x.depenses])).toEqual([

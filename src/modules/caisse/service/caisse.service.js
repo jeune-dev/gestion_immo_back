@@ -7,6 +7,7 @@ const { chargerPourProprietaire, verifierReference } = require('../../../utils/a
 const { ConflictError, ValidationError } = require('../../../errors/AppError.js');
 const { periode } = require('../../../utils/liste.js');
 const { journaliser } = require('../../audit/service/audit.service.js');
+const { invaliderTableauDeBord } = require('../../../utils/cache.js');
 
 /**
  * Caisse (§ 21) : journal des entrées et sorties.
@@ -32,6 +33,7 @@ async function enregistrerMouvement(t, {
   ownerId, buildingId = null, apartmentId = null, direction, category, amount, method,
   occurredOn, label, sourceType, sourceId = null, createdBy = null,
 }) {
+  t.afterCommit(() => invaliderTableauDeBord(ownerId));
   return CashMovement.create({
     owner_id: ownerId,
     building_id: buildingId,
@@ -51,11 +53,32 @@ async function enregistrerMouvement(t, {
 
 /** Annule les mouvements d'une source (remboursement, annulation de dépense). */
 async function annulerParSource(t, sourceType, sourceId) {
-  const [n] = await CashMovement.update(
+  const [n, lignes] = await CashMovement.update(
     { cancelled_at: new Date() },
-    { where: { source_type: sourceType, source_id: sourceId, cancelled_at: null }, transaction: t }
+    { where: { source_type: sourceType, source_id: sourceId, cancelled_at: null }, transaction: t, returning: ['owner_id'] }
   );
+  if (lignes?.[0]) t.afterCommit(() => invaliderTableauDeBord(lignes[0].owner_id));
   return n;
+}
+
+/** Fait passer `montant` de la catégorie « loyer » à « charges » pour un paiement déjà en caisse. */
+async function reclasserLoyerEnCharges(t, paiement, montant) {
+  const loyer = await CashMovement.findOne({
+    where: { source_type: 'rent_payment', source_id: paiement.id, category: 'loyer', direction: 'entree', cancelled_at: null },
+    transaction: t,
+    lock: t.LOCK.UPDATE,
+  });
+  if (!loyer) return;
+  if (loyer.amount <= montant) {
+    await loyer.update({ category: 'charges', label: loyer.label.replace(/^Loyer/, 'Charges') }, { transaction: t });
+    return;
+  }
+  await loyer.update({ amount: loyer.amount - montant }, { transaction: t });
+  await enregistrerMouvement(t, {
+    ownerId: loyer.owner_id, buildingId: loyer.building_id, apartmentId: loyer.apartment_id, direction: 'entree',
+    category: 'charges', amount: montant, method: loyer.method, occurredOn: loyer.occurred_on,
+    label: loyer.label.replace(/^Loyer/, 'Charges'), sourceType: 'rent_payment', sourceId: paiement.id, createdBy: loyer.created_by,
+  });
 }
 
 function filtresJournal(ownerId, { du, au, building_id: buildingId, direction, category, method, inclure_cautions: inclureCautions }) {
@@ -90,12 +113,14 @@ async function journal(ownerId, filtres, { limit, offset }) {
  */
 async function synthese(ownerId, { du, au, building_id: buildingId }) {
   const lignes = await sequelize.query(`
-    SELECT direction, category, is_deposit, sum(amount)::bigint AS total, count(*)::int AS nombre
-      FROM cash_movements
-     WHERE owner_id = :ownerId AND cancelled_at IS NULL
-       AND occurred_on BETWEEN :du AND :au
-       AND (CAST(:buildingId AS uuid) IS NULL OR building_id = CAST(:buildingId AS uuid))
-     GROUP BY direction, category, is_deposit`,
+    SELECT cm.direction, cm.category, cm.is_deposit, (dt.type = 'retenue') IS TRUE AS est_retenue,
+           sum(cm.amount)::bigint AS total, count(*)::int AS nombre
+      FROM cash_movements cm
+      LEFT JOIN deposit_transactions dt ON cm.source_type = 'deposit_transaction' AND dt.id = cm.source_id
+     WHERE cm.owner_id = :ownerId AND cm.cancelled_at IS NULL
+       AND cm.occurred_on BETWEEN :du AND :au
+       AND (CAST(:buildingId AS uuid) IS NULL OR cm.building_id = CAST(:buildingId AS uuid))
+     GROUP BY cm.direction, cm.category, cm.is_deposit, est_retenue`,
   { replacements: { ownerId, du, au, buildingId: buildingId || null }, type: QueryTypes.SELECT });
 
   const exploitation = lignes.filter((l) => !l.is_deposit);
@@ -105,6 +130,7 @@ async function synthese(ownerId, { du, au, building_id: buildingId }) {
   const cautions = lignes.filter((l) => l.is_deposit);
   const cautionEntrees = cautions.filter((l) => l.direction === 'entree').reduce((a, l) => a + l.total, 0);
   const cautionSorties = cautions.filter((l) => l.direction === 'sortie').reduce((a, l) => a + l.total, 0);
+  const cautionRetenues = cautions.filter((l) => l.est_retenue).reduce((a, l) => a + l.total, 0);
 
   return {
     periode: { du, au },
@@ -113,7 +139,9 @@ async function synthese(ownerId, { du, au, building_id: buildingId }) {
     solde: entrees - sorties,
     detail_entrees: exploitation.filter((l) => l.direction === 'entree').map(({ category, total, nombre }) => ({ category, total, nombre })),
     detail_sorties: exploitation.filter((l) => l.direction === 'sortie').map(({ category, total, nombre }) => ({ category, total, nombre })),
-    cautions: { recues: cautionEntrees, restituees: cautionSorties, solde: cautionEntrees - cautionSorties },
+    cautions: {
+      recues: cautionEntrees, restituees: cautionSorties - cautionRetenues, retenues: cautionRetenues, solde: cautionEntrees - cautionSorties,
+    },
   };
 }
 
@@ -166,4 +194,4 @@ async function annulerManuel(ownerId, id, motif) {
   });
 }
 
-module.exports = { enregistrerMouvement, annulerParSource, journal, synthese, ajouterAutreRevenu, annulerManuel };
+module.exports = { enregistrerMouvement, annulerParSource, reclasserLoyerEnCharges, journal, synthese, ajouterAutreRevenu, annulerManuel };

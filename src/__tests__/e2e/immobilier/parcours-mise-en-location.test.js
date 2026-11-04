@@ -1,5 +1,8 @@
 'use strict';
 
+// Jeu de données daté de septembre 2026 : date du jour figée (voir le module).
+require('../../setup/dateDuJour.js');
+
 const {
   api, bearer, MOT_DE_PASSE, telephoneUnique, emailUnique, pngTest, publierModeleBail, compter, fermer, sequelize,
   reperes,

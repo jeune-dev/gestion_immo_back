@@ -13,6 +13,7 @@ const DepositTransaction = sequelize.define('DepositTransaction', {
   occurred_on: { type: DataTypes.DATEONLY, allowNull: false },
   method: { type: DataTypes.STRING(15) },
   reference: { type: DataTypes.STRING(64) },
+  rent_payment_id: { type: DataTypes.UUID },
   reason: { type: DataTypes.STRING(15) },
   description: { type: DataTypes.TEXT },
   justification_document_ids: { type: DataTypes.ARRAY(DataTypes.UUID), allowNull: false, defaultValue: [] },

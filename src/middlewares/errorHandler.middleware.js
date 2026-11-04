@@ -55,7 +55,7 @@ function normaliser(err) {
       codeExplicite: Boolean(err.code),
       message: err.message,
       details: err.details,
-      retryAfterS: statut === 503 ? (err.details?.reessayerDansS || 5) : null,
+      retryAfterS: statut === 503 ? (err.details?.reessayerDansS || 5) : (statut === 429 ? err.details?.reessayer_dans_s || null : null),
     };
   }
 

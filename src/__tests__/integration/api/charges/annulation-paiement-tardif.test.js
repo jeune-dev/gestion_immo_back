@@ -36,7 +36,7 @@ describe('Annulation de facture et confirmation tardive d’un paiement de charg
   /** Facture répartie sur l'immeuble du bail : une charge pour l'appartement occupé. */
   async function factureRepartie() {
     const creation = await api().post(FC).set(proprio.h).send({
-      building_id: bail.building.id, charge_type: 'eau', supplier: 'SEN’EAU',
+      building_id: bail.building.id, charge_type: 'eau', supplier: 'SEN’EAU', invoice_number: `T-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       period_start: '2026-09-01', period_end: '2026-09-30', amount: 30000, allocation_method: 'egale',
     });
     expect(creation.status).toBe(201);

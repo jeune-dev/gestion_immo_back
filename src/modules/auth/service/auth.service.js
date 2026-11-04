@@ -6,19 +6,19 @@ const sequelize = require('../../../config/db.js');
 const {
   User, Owner, OwnerMember, Subscription, SubscriptionPlan, PasswordReset, Tenant, TenantInvitation,
 } = require('../../../models/index.js');
-const { bcryptConfig, verrouillageConfig } = require('../../../config/security.js');
+const { bcryptConfig, validerMotDePasseAdmin } = require('../../../config/security.js');
 const bcrypt = require('../../../utils/motDePasse.js');
 const { normaliserTelephone } = require('../../../utils/telephone.js');
 const { aujourdhui, ajouterJours } = require('../../../utils/dates.js');
-const { ConflictError, UnauthorizedError, ForbiddenError, BadRequestError } = require('../../../errors/AppError.js');
+const { ConflictError, UnauthorizedError, ForbiddenError, BadRequestError, ValidationError } = require('../../../errors/AppError.js');
 const sessions = require('./session.service.js');
 const invitations = require('./invitation.service.js');
 const mfa = require('./mfa.service.js');
+const verrouillage = require('./verrouillage.service.js');
 const parametres = require('../../parametres/service/parametres.service.js');
 const email = require('../../../infrastructure/email.service.js');
 const { journaliser } = require('../../audit/service/audit.service.js');
 const logger = require('../../../utils/logger.js');
-const { alerter, TYPES } = require('../../../infrastructure/alertes.service.js');
 const { comparerTempsConstant } = require('../../../infrastructure/paiement/signature.js');
 
 // Empreinte bcrypt factice (même coût que les vraies) : égalise le temps de
@@ -30,12 +30,15 @@ const EMPREINTE_FACTICE = () => {
   return empreinteFactice;
 };
 
-// Réponse UNIQUE pour « compte inconnu », « mauvais mot de passe » et « compte
-// temporairement bloqué » (constat M4) : l'ancien 403 COMPTE_VERROUILLE, rendu
-// AVANT toute vérification, révélait qu'un compte existe et permettait de
-// constater (et d'entretenir) son blocage. Le titulaire légitime se débloque
-// par « mot de passe oublié », qui lève le verrouillage.
-const MESSAGE_ECHEC = 'Identifiant ou mot de passe incorrect. Après plusieurs essais, le compte est bloqué 15 minutes (ou utilisez « mot de passe oublié »).';
+// Réponse identique pour « compte inconnu » et « mauvais mot de passe ». Le
+// blocage temporaire, lui, est annoncé avec son délai réel
+// (verrouillage.service) ; « mot de passe oublié » le lève.
+const MESSAGE_ECHEC = 'Identifiant ou mot de passe incorrect.';
+
+/** Prévient quand le prochain essai faux va bloquer le compte. */
+const messageEchec = (essaisRestants) => (essaisRestants <= 2
+  ? `${MESSAGE_ECHEC} Attention : encore ${essaisRestants} essai${essaisRestants > 1 ? 's' : ''} avant un blocage temporaire du compte.`
+  : MESSAGE_ECHEC);
 
 /**
  * Traçage des connexions dans le journal d'audit (constat M9) : réussites et
@@ -146,31 +149,16 @@ async function connecter({ identifiant, password }, meta) {
     throw new UnauthorizedError(MESSAGE_ECHEC, 'IDENTIFIANTS_INVALIDES');
   }
 
-  if (user.locked_until && user.locked_until > new Date()) {
-    // Même coût et même réponse qu'un mot de passe faux (anti-énumération).
-    await bcrypt.compare(password, await EMPREINTE_FACTICE());
+  if (verrouillage.secondesRestantes(user) > 0) {
     await tracerConnexion('compte.connexion_echec', { user, identifiant, motif: 'compte_verrouille' });
-    throw new UnauthorizedError(MESSAGE_ECHEC, 'IDENTIFIANTS_INVALIDES');
+    verrouillage.verifierNonBloque(user);
   }
 
   const valide = await bcrypt.compare(password, user.password_hash);
   if (!valide) {
-    // Incrément ATOMIQUE en base : des essais parallèles ne se neutralisent pas.
-    const [[ligne]] = await sequelize.query(
-      `UPDATE users SET failed_login_attempts = failed_login_attempts + 1,
-              locked_until = CASE WHEN failed_login_attempts + 1 >= :max THEN now() + (:minutes || ' minutes')::interval ELSE locked_until END
-        WHERE id = :id RETURNING failed_login_attempts`,
-      { replacements: { id: user.id, max: verrouillageConfig.maxTentatives, minutes: String(verrouillageConfig.dureeMinutes) } }
-    );
-    if (ligne?.failed_login_attempts >= verrouillageConfig.maxTentatives) {
-      await User.update({ failed_login_attempts: 0 }, { where: { id: user.id } });
-      await journaliser({ action: 'compte.verrouillage', entityType: 'user', entityId: user.id, acteur: user, details: { motif: 'echecs_successifs' } });
-      if (user.role_code === 'super_admin') {
-        alerter(TYPES.VERROUILLAGE_SUPER_ADMIN, 'Compte super administrateur verrouillé après des mots de passe faux successifs', { utilisateurId: user.id });
-      }
-    }
     await tracerConnexion('compte.connexion_echec', { user, identifiant, motif: 'mot_de_passe' });
-    throw new UnauthorizedError(MESSAGE_ECHEC, 'IDENTIFIANTS_INVALIDES');
+    const { essaisRestants } = await verrouillage.enregistrerEchec(user, 'echecs_successifs');
+    throw new UnauthorizedError(messageEchec(essaisRestants), 'IDENTIFIANTS_INVALIDES');
   }
 
   // Statut annoncé seulement à qui connaît le mot de passe (anti-énumération).
@@ -185,42 +173,47 @@ async function connecter({ identifiant, password }, meta) {
     return { user, mfa: { jeton: mfa.emettreJetonMfa(user), expiresIn: mfa.DUREE_JETON_MFA } };
   }
 
-  if (user.failed_login_attempts || user.locked_until) {
-    await user.update({ failed_login_attempts: 0, locked_until: null });
-  }
+  await verrouillage.reinitialiser(user);
   const session = await sessions.ouvrirSession(user, meta);
   await tracerConnexion('compte.connexion', { user, identifiant });
   return { user, session };
 }
 
 /**
- * Mot de passe oublié (§ 5) : code à 6 chiffres par e-mail, 15 minutes.
- * Réponse identique que le compte existe ou non.
+ * Code de réinitialisation : 8 caractères (lettres majuscules et chiffres, comme
+ * Yobante), tirés sans biais. Stocké en empreinte HMAC liée au compte.
+ */
+const ALPHABET_CODE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const genererCode = () => Array.from({ length: 8 }, () => ALPHABET_CODE[crypto.randomInt(ALPHABET_CODE.length)]).join('');
+const empreinteCode = (userId, code) => crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${userId}:${code}`).digest('hex');
+
+/**
+ * Mot de passe oublié (§ 5), étape 1 : code envoyé par e-mail, valable la
+ * durée du paramètre `otp` (15 minutes par défaut). Réponse identique que le
+ * compte existe ou non. Une nouvelle demande annule le code précédent.
+ *
+ * Super admin : réinitialisation par e-mail autorisée (comme Yobante) ; sa
+ * double authentification est supprimée au changement de mot de passe et
+ * devra être reconfigurée à la connexion suivante.
  */
 async function demanderReinitialisation({ identifiant }) {
   const critere = critereIdentifiant(identifiant);
   const user = critere ? await User.findOne({ where: critere, attributes: ['id', 'email', 'first_name', 'status', 'role_code'] }) : null;
   if (!user || user.status !== 'actif' || !user.email) return;
-  // Super admin : AUCUNE réinitialisation par e-mail (une boîte mail compromise
-  // ne doit pas suffire à prendre la plateforme). Accès rétabli par un autre
-  // super admin (POST /admin/utilisateurs/:id/reinitialiser-acces). Réponse
-  // identique pour l'appelant (anti-énumération), tentative journalisée.
-  if (user.role_code === 'super_admin') {
-    logger.warn('[auth] Réinitialisation par e-mail demandée pour un super admin — refusée', { utilisateurId: user.id });
-    await journaliser({ action: 'compte.reinitialisation_refusee', entityType: 'user', entityId: user.id, acteur: { id: null, role_code: 'anonyme' }, details: { motif: 'super_admin' } });
-    return;
-  }
 
   const { duree_minutes: minutes } = await parametres.plateforme('otp');
-  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  const code = genererCode();
   await sequelize.transaction(async (t) => {
     await PasswordReset.update({ used_at: new Date() }, { where: { user_id: user.id, used_at: null }, transaction: t });
     await PasswordReset.create({
       user_id: user.id,
-      otp_hash: crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${user.id}:${code}`).digest('hex'),
+      otp_hash: empreinteCode(user.id, code),
       expires_at: new Date(Date.now() + minutes * 60 * 1000),
     }, { transaction: t });
   });
+  if (user.role_code === 'super_admin') {
+    await journaliser({ action: 'compte.reinitialisation_demandee', entityType: 'user', entityId: user.id, acteur: { id: null, role_code: 'anonyme' }, details: { role: 'super_admin' } });
+  }
   try {
     await email.envoyerCodeReinitialisation({ email: user.email, prenom: user.first_name, code, minutes });
   } catch (err) {
@@ -228,11 +221,17 @@ async function demanderReinitialisation({ identifiant }) {
   }
 }
 
-async function reinitialiserMotDePasse({ identifiant, code, password }) {
+/**
+ * Contrôle d'un code reçu : compte actif, demande en cours, essai compté
+ * AVANT la comparaison (constat E2 : une mise à jour conditionnelle unique,
+ * sinon des requêtes simultanées multipliaient les essais sur un même code).
+ * @returns {Promise<{ user, demande }>}
+ */
+async function controlerCode({ identifiant, code }) {
   const critere = critereIdentifiant(identifiant);
   const user = critere ? await User.findOne({ where: critere }) : null;
-  const refus = new BadRequestError('Code invalide ou expiré', 'CODE_INVALIDE');
-  if (!user || user.role_code === 'super_admin') throw refus;
+  const refus = new BadRequestError('Code incorrect ou expiré. Vérifiez-le ou demandez-en un nouveau.', 'CODE_INVALIDE');
+  if (!user || user.status !== 'actif') throw refus;
 
   const { tentatives_max: maxEssais } = await parametres.plateforme('otp');
   const demande = await PasswordReset.findOne({
@@ -241,20 +240,35 @@ async function reinitialiserMotDePasse({ identifiant, code, password }) {
   });
   if (!demande) throw refus;
 
-  // L'essai est compté AVANT la comparaison, par UNE mise à jour conditionnelle
-  // (constat E2) : lire `attempts` puis l'incrémenter laissait des requêtes
-  // simultanées passer toutes le contrôle avant le premier incrément, et
-  // multipliait les essais sur un code à 6 chiffres.
   const [comptes] = await sequelize.query(
     `UPDATE password_resets SET attempts = attempts + 1
       WHERE id = :id AND used_at IS NULL AND attempts < :max RETURNING attempts`,
     { replacements: { id: demande.id, max: maxEssais } }
   );
-  if (!comptes.length) throw refus;
+  if (!comptes.length) {
+    throw new BadRequestError('Trop d’essais pour ce code. Demandez-en un nouveau.', 'CODE_EPUISE');
+  }
+  if (!comparerTempsConstant(empreinteCode(user.id, code), demande.otp_hash)) throw refus;
+  return { user, demande };
+}
 
-  const attendu = crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${user.id}:${code}`).digest('hex');
-  if (!comparerTempsConstant(attendu, demande.otp_hash)) throw refus;
+/** Étape 2 : vérifie le code sans le consommer (avant de choisir le nouveau mot de passe). */
+async function verifierCodeReinitialisation(donnees) {
+  await controlerCode(donnees);
+}
 
+/** Étape 3 : nouveau mot de passe ; le code est consommé et toutes les sessions tombent. */
+async function reinitialiserMotDePasse({ identifiant, code, password }) {
+  const { user, demande } = await controlerCode({ identifiant, code });
+
+  const superAdmin = user.role_code === 'super_admin';
+  // Politique renforcée du super admin, contrôlée APRÈS le code (sinon un
+  // mot de passe refusé révélerait qu'un identifiant est celui d'un super
+  // admin). Le code n'est pas consommé : l'utilisateur en choisit un autre.
+  if (superAdmin) {
+    const erreur = validerMotDePasseAdmin(password, user.email);
+    if (erreur) throw new ValidationError('Données invalides', [erreur], 'MOT_DE_PASSE_TROP_FAIBLE');
+  }
   const empreinte = await bcrypt.hash(password, bcryptConfig.saltRounds);
   await sequelize.transaction(async (t) => {
     // Consommation conditionnelle : un code ne sert qu'une fois, même sous concurrence.
@@ -262,11 +276,21 @@ async function reinitialiserMotDePasse({ identifiant, code, password }) {
       { used_at: new Date() },
       { where: { id: demande.id, used_at: null }, transaction: t }
     );
-    if (!consomme) throw refus;
-    await user.update({ password_hash: empreinte, failed_login_attempts: 0, locked_until: null, must_change_password: false }, { transaction: t });
+    if (!consomme) throw new BadRequestError('Code incorrect ou expiré. Vérifiez-le ou demandez-en un nouveau.', 'CODE_INVALIDE');
+    await user.update({
+      password_hash: empreinte,
+      failed_login_attempts: 0,
+      locked_until: null,
+      must_change_password: false,
+      // Super admin : double authentification à reconfigurer (le code e-mail a suffi).
+      ...(superAdmin ? { totp_secret: null, totp_enabled_at: null, totp_last_step: null, mfa_recovery_codes: [] } : {}),
+    }, { transaction: t });
     // Toutes les sessions tombent : un voleur de session perd l'accès.
     await sessions.revoquerToutesLesSessions(user.id, t);
-    await journaliser({ action: 'compte.reinitialisation_mot_de_passe', entityType: 'user', entityId: user.id, acteur: user }, t);
+    await journaliser({
+      action: 'compte.reinitialisation_mot_de_passe', entityType: 'user', entityId: user.id, acteur: user,
+      details: superAdmin ? { double_authentification_reinitialisee: true } : undefined,
+    }, t);
   });
 }
 
@@ -352,5 +376,5 @@ async function activerAvecInvitation(invitationId, { token, password }, meta, re
 }
 
 module.exports = {
-  inscrireProprietaire, connecter, demanderReinitialisation, reinitialiserMotDePasse, activerLocataire, critereIdentifiant,
+  inscrireProprietaire, connecter, demanderReinitialisation, verifierCodeReinitialisation, reinitialiserMotDePasse, activerLocataire, critereIdentifiant,
 };

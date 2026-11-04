@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const sequelize = require('../../../config/db.js');
 const { User } = require('../../../models/index.js');
-const { jwtConfig, verrouillageConfig } = require('../../../config/security.js');
+const { jwtConfig } = require('../../../config/security.js');
 const bcrypt = require('../../../utils/motDePasse.js');
 const hashToken = require('../../../utils/hashToken.js');
 const totp = require('../../../utils/totp.js');
@@ -13,7 +13,7 @@ const {
 } = require('../../../errors/AppError.js');
 const sessions = require('./session.service.js');
 const { journaliser } = require('../../audit/service/audit.service.js');
-const { alerter, TYPES } = require('../../../infrastructure/alertes.service.js');
+const verrouillage = require('./verrouillage.service.js');
 
 /**
  * Double authentification TOTP (constat E1 de l'audit de sécurité).
@@ -25,7 +25,7 @@ const { alerter, TYPES } = require('../../../infrastructure/alertes.service.js')
  * - Facultative pour les autres comptes (même mécanisme, désactivable).
  * - Anti-rejeu : un code (un pas de 30 s) ne sert qu'une fois.
  * - Force brute bornée : chaque code faux compte dans le verrouillage du
- *   compte (5 échecs → 15 min), comme un mauvais mot de passe.
+ *   compte (verrouillage progressif), comme un mauvais mot de passe.
  * - 10 codes de secours à usage unique, stockés en empreintes SHA-256.
  */
 
@@ -66,20 +66,16 @@ function nouveauxCodesSecours() {
 }
 const normaliserCodeSecours = (code) => String(code || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
 
-/** Échec du second facteur : même compteur ATOMIQUE que les mots de passe faux. */
+/**
+ * Échec du second facteur hors connexion (activation, désactivation, codes de
+ * secours) : compté dans le même verrouillage, mais l'appelant garde sa
+ * propre erreur — le blocage s'appliquera à la prochaine connexion.
+ */
 async function compterEchec(user) {
-  const [[ligne]] = await sequelize.query(
-    `UPDATE users SET failed_login_attempts = failed_login_attempts + 1,
-            locked_until = CASE WHEN failed_login_attempts + 1 >= :max THEN now() + (:minutes || ' minutes')::interval ELSE locked_until END
-      WHERE id = :id RETURNING failed_login_attempts`,
-    { replacements: { id: user.id, max: verrouillageConfig.maxTentatives, minutes: String(verrouillageConfig.dureeMinutes) } }
-  );
-  if (ligne?.failed_login_attempts >= verrouillageConfig.maxTentatives) {
-    await User.update({ failed_login_attempts: 0 }, { where: { id: user.id } });
-    await journaliser({ action: 'compte.verrouillage', entityType: 'user', entityId: user.id, acteur: user, details: { motif: 'echecs_double_authentification' } });
-    if (user.role_code === 'super_admin') {
-      alerter(TYPES.VERROUILLAGE_SUPER_ADMIN, 'Compte super administrateur verrouillé après des codes de double authentification faux', { utilisateurId: user.id });
-    }
+  try {
+    await verrouillage.enregistrerEchec(user, 'echecs_double_authentification');
+  } catch (err) {
+    if (err.code !== 'COMPTE_BLOQUE') throw err;
   }
 }
 
@@ -122,15 +118,15 @@ async function finaliserConnexion({ mfa_token: jeton, code, code_secours: codeSe
   if (!user || user.status !== 'actif' || !mfaActive(user) || user.token_version !== decode.tv) {
     throw new UnauthorizedError('Étape de vérification expirée, reconnectez-vous', 'JETON_MFA_INVALIDE');
   }
-  if (user.locked_until && user.locked_until > new Date()) throw refus;
+  verrouillage.verifierNonBloque(user);
 
   const facteur = await verifierSecondFacteur(user, { code, code_secours: codeSecours });
   if (!facteur) {
-    await compterEchec(user);
+    await verrouillage.enregistrerEchec(user, 'echecs_double_authentification');
     throw refus;
   }
   await user.reload();
-  if (user.failed_login_attempts || user.locked_until) await user.update({ failed_login_attempts: 0, locked_until: null });
+  await verrouillage.reinitialiser(user);
   const session = await sessions.ouvrirSession(user, meta);
   await journaliser({
     action: 'compte.connexion_double_authentification', entityType: 'user', entityId: user.id, acteur: user,

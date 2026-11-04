@@ -4,7 +4,7 @@ const {
   Joi, uuid, montantPositif, montant, tri, recherche, pagination,
 } = require('../../../validations/common.js');
 const {
-  codes, TYPE_CHARGE, METHODE_REPARTITION, STATUT_FACTURE_COMMUNE,
+  codes, TYPE_CHARGE, METHODE_REPARTITION, STATUT_FACTURE_COMMUNE, MODE_PAIEMENT,
 } = require('../../../config/enums.js');
 // Date existante au calendrier : « 2026-02-30 » ferait échouer PostgreSQL (500).
 const { dateReelle: dateIso } = require('../../rapport/validation/rapport.validation.js');
@@ -83,6 +83,8 @@ const repartitionSchema = Joi.object({
   apartment_ids: Joi.array().items(uuid).min(1).max(1000).unique(),
   lines: Joi.array().items(ligne).min(1).max(1000).unique('apartment_id'),
   unit: Joi.string().trim().max(10),
+  // Mode de règlement du fournisseur, repris par la dépense créée à la répartition.
+  payment_method: Joi.string().valid(...codes(MODE_PAIEMENT)),
 });
 
 /**

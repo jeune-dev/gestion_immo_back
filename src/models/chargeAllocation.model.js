@@ -13,6 +13,7 @@ const ChargeAllocation = sequelize.define('ChargeAllocation', {
   basis_value: { type: DataTypes.DECIMAL(14, 4) },
   share: { type: DataTypes.DECIMAL(12, 8), allowNull: false },
   amount: { type: DataTypes.BIGINT, allowNull: false },
+  provision_deducted: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
   explanation: { type: DataTypes.TEXT, allowNull: false },
 }, {
   tableName: 'charge_allocations',

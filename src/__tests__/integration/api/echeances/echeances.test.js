@@ -1,5 +1,8 @@
 'use strict';
 
+// Jeu de données daté de septembre 2026 : date du jour figée (voir le module).
+require('../../../setup/dateDuJour.js');
+
 const {
   api, nouveauProprietaire, bailActif, activerLocataire, proprietaireEtLocataire, fermer, sequelize, compter, payerEspeces,
   reperes, bailRelatif,
@@ -127,9 +130,9 @@ describe('Échéances', () => {
       expect((await q(`building_id=${a.building.id}`)).every((e) => e.lease_id === a.lease.id)).toBe(true);
       expect((await q('status=paye')).map((e) => e.id)).toEqual([echueA.id]);
       expect((await q('status=partiellement_paye')).map((e) => e.id)).toEqual([suivanteA.id]);
-      // § 48 « Qui n'a pas payé ? » : en retard ou partiellement payées.
+      // § 48 « Qui n'a pas payé ? » : en retard, ou partiellement payées ET échues (même définition que le KPI).
       const impayes = await q('impayes=true');
-      expect(impayes.map((e) => e.id).sort()).toEqual([suivanteA.id, (await echeancesDu(p, b.lease.id))[0].id].sort());
+      expect(impayes.map((e) => e.id)).toEqual([(await echeancesDu(p, b.lease.id))[0].id]);
       const periode = `du=${r.p0.debut}&au=${r.p0.fin}`;
       expect((await q(periode)).every((e) => e.due_date >= r.p0.debut && e.due_date <= r.p0.fin)).toBe(true);
       expect((await q(periode))).toHaveLength(2);

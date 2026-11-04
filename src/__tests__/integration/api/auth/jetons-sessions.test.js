@@ -118,8 +118,9 @@ describe('Jeton d’accès : révocation par l’état du compte', () => {
     await sequelize.query("UPDATE users SET locked_until = now() + interval '10 minutes' WHERE id = :u", { replacements: { u: p.user.id } });
     expect((await api().get(COMPTE).set(p.h)).status).toBe(200);
     const res = await api().post('/api/v1/auth/connexion').send({ identifiant: p.identifiants.email, password: MOT_DE_PASSE });
-    expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('IDENTIFIANTS_INVALIDES');
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe('COMPTE_BLOQUE');
+    expect(res.body.message).toMatch(/10 minutes/);
   });
 });
 

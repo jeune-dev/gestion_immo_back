@@ -3,7 +3,7 @@
 const { Op } = require('sequelize');
 const sequelize = require('../../../config/db.js');
 const {
-  Deposit, DepositTransaction, Lease, Tenant, Apartment, Building, Document, Inspection, InspectionItem,
+  Deposit, DepositTransaction, Lease, Tenant, Apartment, Building, Document, Inspection, InspectionItem, RentPayment,
 } = require('../../../models/index.js');
 const { chargerPourProprietaire, chargerPourLocataire } = require('../../../utils/acces.js');
 const { ordre } = require('../../../utils/liste.js');
@@ -12,6 +12,7 @@ const { formatFr, aujourdhui, ecartJours } = require('../../../utils/dates.js');
 const { ConflictError, ValidationError, ForbiddenError } = require('../../../errors/AppError.js');
 const { transactionAvecFichiers } = require('../../../database/transaction.js');
 const caisse = require('../../caisse/service/caisse.service.js');
+const allocation = require('../../paiement/service/allocation.service.js');
 const documents = require('../../document/service/document.service.js');
 const pdf = require('../../../infrastructure/pdf.service.js');
 const { notifier, destinataireLocataire, destinatairesProprietaire } = require('../../notification/service/notification.service.js');
@@ -27,6 +28,10 @@ const { journaliser } = require('../../audit/service/audit.service.js');
  *   - toute retenue exige un motif ET un justificatif (contrôle applicatif ET
  *     contrainte SQL) ; le locataire est notifié et peut contester ;
  *   - aucune suppression physique, chaque opération est au journal d'audit.
+ *
+ * Une retenue fait sortir le montant du solde de caution en caisse. Celle pour
+ * loyer ou charges impayés crée en plus un paiement imputé aux postes ouverts du
+ * bail ; une contestation annulée ou ajustée défait ou corrige ces écritures.
  *
  * Le STATUT est toujours RECALCULÉ à partir des montants et des contestations
  * (fonction pure `statutCaution`), jamais posé à la main.
@@ -178,6 +183,38 @@ async function ajouterJustificatif(ownerId, user, id, fichier) {
   });
 }
 
+const MOTIFS_IMPAYES = new Set(['loyer_impaye', 'charges']);
+
+/** Écritures d'une retenue : sortie du solde de caution, imputation des impayés. */
+async function ecrireRetenue(t, { deposit, lease, tr, montant, user, imputer }) {
+  await caisse.enregistrerMouvement(t, {
+    ownerId: deposit.owner_id, buildingId: lease.apartment.building_id, apartmentId: lease.apartment.id, direction: 'sortie', category: 'caution',
+    amount: montant, method: 'autre', occurredOn: tr.occurred_on, label: `Retenue sur caution — ${lease.reference}`,
+    sourceType: 'deposit_transaction', sourceId: tr.id, createdBy: user.id,
+  });
+  if (!imputer) return;
+  const { paiement } = await allocation.enregistrerPaiement(t, {
+    lease,
+    montant,
+    methode: 'autre',
+    datePaiement: tr.occurred_on,
+    enregistrePar: user.id,
+    commentaire: `Retenue sur caution — ${lease.reference}`,
+    excedent: 'fifo',
+  });
+  await tr.update({ rent_payment_id: paiement.id }, { transaction: t });
+}
+
+/** Défait le paiement d'une retenue : les postes soldés sont rouverts, l'entrée de caisse annulée. */
+async function defairePaiementRetenue(t, tr, user, motif) {
+  if (!tr.rent_payment_id) return;
+  const paiement = await RentPayment.findByPk(tr.rent_payment_id, { transaction: t, lock: t.LOCK.UPDATE });
+  await allocation.desimputer(t, paiement, motif);
+  await paiement.update({ status: 'rembourse', refunded_at: new Date(), refund_reason: motif, refunded_by: user.id }, { transaction: t });
+  await caisse.annulerParSource(t, 'rent_payment', paiement.id);
+  await tr.update({ rent_payment_id: null }, { transaction: t });
+}
+
 /**
  * § 55.3 — retenue (dégradation, loyer impayé, charges) : motif + justificatif
  * obligatoires, pendant le décompte de fin de bail. Le locataire est notifié
@@ -229,6 +266,9 @@ async function retenir(ownerId, user, id, donnees) {
       inspection_item_ids: donnees.inspection_item_ids || [], created_by: user.id,
     }, { transaction: t });
     await recalculer(t, deposit);
+    await ecrireRetenue(t, {
+      deposit, lease, tr: mouvement, montant: donnees.amount, user, imputer: MOTIFS_IMPAYES.has(donnees.reason),
+    });
     await journaliser({ action: 'caution.retenue', entityType: 'deposit', entityId: deposit.id, ownerId, details: { montant: donnees.amount, motif: donnees.reason, justificatifs: donnees.justification_document_ids.length } }, t);
     await notifier(t, {
       destinataires: [destinataireLocataire(tenant)], ownerId, type: 'caution',
@@ -279,8 +319,8 @@ async function restituer(ownerId, user, id, donnees) {
  * propriétaire, issue ») : retenue maintenue (le litige reste, documenté),
  * annulée ou ajustée.
  */
-async function repondreContestation(ownerId, id, transactionId, { response, outcome, adjusted_amount: ajuste }) {
-  return operer(ownerId, id, async ({ t, deposit, tenant }) => {
+async function repondreContestation(ownerId, user, id, transactionId, { response, outcome, adjusted_amount: ajuste }) {
+  return operer(ownerId, id, async ({ t, deposit, lease, tenant }) => {
     const tr = await DepositTransaction.findByPk(transactionId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!tr || tr.deposit_id !== deposit.id) throw new ValidationError('Données invalides', ['Retenue introuvable pour cette caution']);
     if (tr.contest_status !== 'conteste') throw new ConflictError("Cette retenue n'est pas en attente de réponse.", 'CONTESTATION_ABSENTE');
@@ -291,6 +331,15 @@ async function repondreContestation(ownerId, id, transactionId, { response, outc
       owner_response: response, contest_outcome: outcome, contest_status: outcome, contest_resolved_at: new Date(),
       adjusted_amount: outcome === 'ajustee' ? ajuste : null,
     }, { transaction: t });
+    if (outcome !== 'maintenue') {
+      const motif = `Retenue ${outcome === 'annulee' ? 'annulée' : 'ajustée'} après contestation`;
+      const avaitPaiement = Boolean(tr.rent_payment_id);
+      await defairePaiementRetenue(t, tr, user, motif);
+      const annules = await caisse.annulerParSource(t, 'deposit_transaction', tr.id);
+      if (outcome === 'ajustee' && ajuste > 0 && annules) {
+        await ecrireRetenue(t, { deposit, lease, tr, montant: ajuste, user, imputer: avaitPaiement });
+      }
+    }
     await recalculer(t, deposit);
     await journaliser({ action: 'caution.reponse_contestation', entityType: 'deposit', entityId: deposit.id, ownerId, details: { retenue: tr.id, issue: outcome, montant_ajuste: ajuste ?? null } }, t);
     await notifier(t, {

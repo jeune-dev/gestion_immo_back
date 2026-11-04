@@ -241,7 +241,7 @@ describe('Rapports (§ 26) et rentabilité (§ 4.21, § 48)', () => {
     expect(r.benefice_net).toBe(460000);
     // Février du bail 1 était impayé au 31/03 (réglé le 10/04) : 300 000 + 300 000 + 150 000.
     expect(r.impayes).toEqual({
-      date: AU, montant: 750000, echeances: 3, locataires: 2,
+      date: AU, montant: 750000, charges: 40000, echeances: 3, locataires: 2,
     });
     expect(r.charges).toEqual({
       nombre_factures: 1,
@@ -249,6 +249,7 @@ describe('Rapports (§ 26) et rentabilité (§ 4.21, § 48)', () => {
       refacturees_locataires: 60000,
       recuperees_locataires: 20000,
       reste_a_recouvrer: 40000,
+      provisions_deduites: 0,
       a_charge_proprietaire: 40000,
     });
     const parImmeuble = Object.fromEntries(r.par_immeuble.map((b) => [b.building_id, b]));

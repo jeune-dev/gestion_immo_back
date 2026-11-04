@@ -34,15 +34,17 @@ describe('E2E — compte et sessions', () => {
     expect((await api().delete(`/api/v1/compte/sessions/${idTablette}`).set(bearer(r1.access_token))).status).toBe(200);
     expect((await api().post('/api/v1/auth/refresh').send({ refresh_token: tablette.refresh_token })).status).toBe(401);
 
-    // Mot de passe oublié : le code (6 chiffres) est connu ici en le déposant
+    // Mot de passe oublié : le code (8 caractères) est connu ici en le déposant
     // comme le ferait le service (même empreinte HMAC), l'e-mail n'étant pas envoyé en test.
     expect((await api().post('/api/v1/auth/mot-de-passe-oublie').send({ identifiant: email })).status).toBe(200);
-    const code = '482913';
+    const code = 'K7P2QX9M';
     await sequelize.query(
       `UPDATE password_resets SET otp_hash = :h WHERE id = (SELECT id FROM password_resets WHERE user_id = :u ORDER BY created_at DESC LIMIT 1)`,
       { replacements: { u: p.user.id, h: crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${p.user.id}:${code}`).digest('hex') } }
     );
     const nouveau = 'NouveauMotDePasse7';
+    // Étape 2 : vérification du code (sans le consommer), saisie en minuscules avec espaces.
+    expect((await api().post('/api/v1/auth/verifier-code').send({ identifiant: email, code: 'k7p2 qx9m' })).status).toBe(200);
     expect((await api().post('/api/v1/auth/reinitialiser-mot-de-passe').send({ identifiant: email, code, password: nouveau, password_confirmation: nouveau })).status).toBe(200);
     // Code à usage unique, anciennes sessions et jetons révoqués.
     expect((await api().post('/api/v1/auth/reinitialiser-mot-de-passe').send({ identifiant: email, code, password: nouveau, password_confirmation: nouveau })).status).toBe(400);
@@ -57,8 +59,11 @@ describe('E2E — compte et sessions', () => {
 
     // Verrouillage après 5 échecs (§ 32 anti force brute), même avec le bon mot de passe ensuite.
     for (let i = 0; i < 5; i += 1) await api().post('/api/v1/auth/connexion').send({ identifiant: email, password: 'Mauvais9x' });
-    // Réponse identique à un mot de passe faux : le blocage ne se révèle pas (constat M4).
-    expect((await api().post('/api/v1/auth/connexion').send({ identifiant: email, password: nouveau })).body.error.code).toBe('IDENTIFIANTS_INVALIDES');
+    // Blocage temporaire annoncé avec son délai, même avec le bon mot de passe.
+    const bloque = await api().post('/api/v1/auth/connexion').send({ identifiant: email, password: nouveau });
+    expect(bloque.status).toBe(429);
+    expect(bloque.body.error.code).toBe('COMPTE_BLOQUE');
+    expect(bloque.body.message).toMatch(/bloqué pendant 1 minute/);
 
     // Déconnexion : la session courante est fermée.
     expect((await api().post('/api/v1/auth/deconnexion').send({ refresh_token: reco.body.data.refresh_token })).status).toBe(200);

@@ -66,9 +66,9 @@ describe('Authentification', () => {
       await api().post('/api/v1/auth/connexion').send({ identifiant: p.identifiants.email, password: 'Mauvais123' });
     }
     const res = await api().post('/api/v1/auth/connexion').send({ identifiant: p.identifiants.email, password: MOT_DE_PASSE });
-    // Même réponse qu'un mot de passe faux (constat M4 : pas d'énumération par le blocage).
-    expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('IDENTIFIANTS_INVALIDES');
+    // Blocage annoncé avec son délai (l'utilisateur comprend pourquoi son bon mot de passe est refusé).
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe('COMPTE_BLOQUE');
   });
 
   test('refresh : rotation, et rejeu tardif d’un jeton consommé = toutes les sessions fermées', async () => {
@@ -134,7 +134,7 @@ describe('Authentification', () => {
     expect(a.status).toBe(200);
     expect(b.body.message).toBe(a.body.message);
     const faux = await api().post('/api/v1/auth/reinitialiser-mot-de-passe')
-      .send({ identifiant: p.identifiants.email, code: '000000', password: 'NouveauMdp9', password_confirmation: 'NouveauMdp9' });
+      .send({ identifiant: p.identifiants.email, code: '00000000', password: 'NouveauMdp9', password_confirmation: 'NouveauMdp9' });
     expect(faux.status).toBe(400);
   });
 });

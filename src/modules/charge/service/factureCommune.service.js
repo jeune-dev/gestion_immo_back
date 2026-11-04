@@ -3,7 +3,7 @@
 const { Op, QueryTypes } = require('sequelize');
 const sequelize = require('../../../config/db.js');
 const {
-  ChargeInvoice, ChargeAllocation, Charge, Building, Apartment, Lease, Tenant,
+  ChargeInvoice, ChargeAllocation, Charge, Building, Apartment, Lease, Tenant, Expense,
 } = require('../../../models/index.js');
 const { TYPE_CHARGE, METHODE_REPARTITION } = require('../../../config/enums.js');
 const { chargerPourProprietaire, verifierReference } = require('../../../utils/acces.js');
@@ -15,6 +15,8 @@ const {
 } = require('../../../errors/AppError.js');
 const { transactionAvecFichiers } = require('../../../database/transaction.js');
 const documents = require('../../document/service/document.service.js');
+const depenses = require('../../depense/service/depense.service.js');
+const categories = require('../../depense/service/categorie.service.js');
 const parametres = require('../../parametres/service/parametres.service.js');
 const { notifier, destinataireLocataire } = require('../../notification/service/notification.service.js');
 const { journaliser, difference } = require('../../audit/service/audit.service.js');
@@ -41,6 +43,11 @@ const { calculerRepartition, statutCharge, uniteParDefaut } = require('./reparti
  *   part.
  * - Une facture répartie n'est plus modifiable (409) : pour corriger, on
  *   l'annule (si aucune charge n'a été encaissée) et on en saisit une autre.
+ * - La répartition crée la DÉPENSE de la facture et sa sortie de caisse : le coût
+ *   entre dans le résultat, face aux charges récupérées. Annuler la facture annule
+ *   cette dépense. Ne pas la saisir une seconde fois à la main.
+ * - La provision de charges déjà appelée sur la période pour un bail est déduite
+ *   de sa part refacturée ; une provision déduite ne sert qu'une fois.
  */
 
 const CHAMPS = [
@@ -71,6 +78,19 @@ const ATTRIBUTS_TOTAUX = [
   [sequelize.literal('(SELECT COALESCE(sum(c.amount), 0) FROM charges c WHERE c.charge_invoice_id = "ChargeInvoice"."id" AND c.status <> \'annule\')'), 'recharged_total'],
   [sequelize.literal('(SELECT COALESCE(sum(c.amount_paid), 0) FROM charges c WHERE c.charge_invoice_id = "ChargeInvoice"."id" AND c.status <> \'annule\')'), 'recharged_paid'],
 ];
+
+/** Type de charge → catégorie de dépense globale (seeders). */
+const CATEGORIE_DEPENSE = Object.freeze({
+  eau: 'facture_eau',
+  electricite: 'facture_electricite',
+  nettoyage: 'nettoyage',
+  securite: 'securite',
+  ascenseur: 'ascenseur',
+  entretien: 'entretien',
+  internet: 'internet',
+  gardiennage: 'gardiennage',
+  autre: 'autre',
+});
 
 const videVersNull = (v) => (v === '' ? null : v);
 
@@ -155,9 +175,44 @@ async function detail(id, ownerId) {
 
 // ── Saisie ───────────────────────────────────────────────────────────────────
 
+/**
+ * Même facture déjà saisie : même immeuble, type, période, montant et fournisseur,
+ * sans deux numéros différents pour les distinguer. L'index unique ne couvre que le
+ * cas d'un numéro identique. Verrou consultatif : deux saisies simultanées passent
+ * l'une après l'autre.
+ */
+async function refuserDoublon(t, ownerId, f, idExclu = null) {
+  await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:cle))', { replacements: { cle: `facture:${f.building_id}` }, transaction: t });
+  const [doublon] = await sequelize.query(`
+    SELECT id FROM charge_invoices
+     WHERE owner_id = :ownerId AND building_id = :buildingId AND charge_type = :type
+       AND period_start = :debut AND period_end = :fin AND amount = :montant
+       AND status <> 'annulee'
+       AND lower(COALESCE(supplier, '')) = lower(:fournisseur)
+       AND (invoice_number IS NULL OR CAST(:numero AS text) IS NULL OR invoice_number = :numero)
+       AND (CAST(:idExclu AS uuid) IS NULL OR id <> CAST(:idExclu AS uuid))
+     LIMIT 1`,
+  {
+    replacements: {
+      ownerId, buildingId: f.building_id, type: f.charge_type, debut: f.period_start, fin: f.period_end, montant: f.amount,
+      fournisseur: f.supplier || '', numero: f.invoice_number || null, idExclu,
+    },
+    type: QueryTypes.SELECT,
+    transaction: t,
+  });
+  if (doublon) {
+    throw new ConflictError(
+      'Cette facture semble déjà saisie (même immeuble, type, période, montant et fournisseur). Indiquez son numéro si c’en est une autre.',
+      'FACTURE_EN_DOUBLE',
+      { invoice_id: doublon.id }
+    );
+  }
+}
+
 async function creer(ownerId, user, donnees) {
   return sequelize.transaction(async (t) => {
     const building = await verifierReference(Building, donnees.building_id, ownerId, 'Immeuble', { transaction: t });
+    await refuserDoublon(t, ownerId, normaliser(donnees));
     const invoice = await ChargeInvoice.create({
       ...normaliser(donnees),
       owner_id: ownerId,
@@ -196,6 +251,7 @@ async function modifier(id, ownerId, donnees) {
     if (fusion.period_end < fusion.period_start) {
       throw new ValidationError('Données invalides', ['La fin de période doit être postérieure ou égale au début de période']);
     }
+    await refuserDoublon(t, ownerId, normaliser(fusion), id);
     const avant = invoice.toJSON();
     const valeurs = normaliser(donnees);
     await invoice.update(valeurs, { transaction: t, fields: CHAMPS });
@@ -253,6 +309,28 @@ async function bauxSurPeriode(ownerId, apartmentIds, debut, fin, t) {
               l.start_date DESC`,
   { replacements: { ownerId, apartmentIds, debut, fin }, type: QueryTypes.SELECT, transaction: t });
   return new Map(lignes.map((l) => [l.apartment_id, l]));
+}
+
+/**
+ * Provision de charges encore déductible par bail sur la période : provisions
+ * des échéances qui la chevauchent, moins ce que les factures réparties
+ * chevauchant la même période en ont déjà pris.
+ * @returns {Promise<Map<string, number>>} lease_id → montant disponible
+ */
+async function provisionsDisponibles(leaseIds, debut, fin, t) {
+  if (!leaseIds.length) return new Map();
+  const lignes = await sequelize.query(`
+    SELECT l.id,
+           COALESCE((SELECT sum(rs.charges_amount) FROM rent_schedules rs
+                      WHERE rs.lease_id = l.id AND rs.status <> 'annule'
+                        AND rs.period_start <= CAST(:fin AS date) AND rs.period_end >= CAST(:debut AS date)), 0)
+         - COALESCE((SELECT sum(ca.provision_deducted) FROM charge_allocations ca
+                       JOIN charge_invoices ci ON ci.id = ca.charge_invoice_id
+                      WHERE ca.lease_id = l.id AND ci.status = 'repartie'
+                        AND ci.period_start <= CAST(:fin AS date) AND ci.period_end >= CAST(:debut AS date)), 0) AS disponible
+      FROM leases l WHERE l.id IN (:leaseIds)`,
+  { replacements: { leaseIds, debut, fin }, type: QueryTypes.SELECT, transaction: t });
+  return new Map(lignes.map((l) => [l.id, Math.max(0, l.disponible)]));
 }
 
 /**
@@ -352,14 +430,27 @@ async function preparer(invoice, ownerId, params, t) {
     { unite: params.unit || uniteParDefaut(invoice.charge_type) }
   );
 
+  const provisions = invoice.recharge_to_tenants
+    ? await provisionsDisponibles([...baux.values()].map((b) => b.id), invoice.period_start, invoice.period_end, t)
+    : new Map();
+
   const lignes = resultat.lignes.map((l) => {
     const bail = baux.get(l.apartment_id) || null;
+    const aRefacturer = Boolean(invoice.recharge_to_tenants && bail && l.amount > 0);
+    const provision = aRefacturer ? Math.min(provisions.get(bail.id) || 0, l.amount) : 0;
+    const net = l.amount - provision;
     return {
       ...l,
       bail,
+      provision_deducted: provision,
+      net,
+      explanation: provision > 0
+        ? `${l.explanation}. Provision déjà appelée déduite : ${formatFcfa(provision)}, reste à payer : ${formatFcfa(net)}`
+        : l.explanation,
       // Seul un appartement occupé sur la période reçoit une charge ; la part
-      // d'un logement vacant reste au propriétaire.
-      refacturee: Boolean(invoice.recharge_to_tenants && bail && l.amount > 0),
+      // d'un logement vacant reste au propriétaire. Couverte par la provision,
+      // la part ne laisse rien à payer.
+      refacturee: aRefacturer && net > 0,
     };
   });
   return { resultat, lignes };
@@ -367,7 +458,8 @@ async function preparer(invoice, ownerId, params, t) {
 
 /** Représentation d'API d'un calcul (aperçu et réponse de répartition). */
 function versApiCalcul(invoice, { resultat, lignes }) {
-  const refacture = lignes.filter((l) => l.refacturee).reduce((s, l) => s + l.amount, 0);
+  const refacture = lignes.filter((l) => l.refacturee).reduce((s, l) => s + l.net, 0);
+  const provisions = lignes.reduce((s, l) => s + l.provision_deducted, 0);
   return {
     invoice_id: invoice.id,
     allocation_method: resultat.methode,
@@ -376,13 +468,16 @@ function versApiCalcul(invoice, { resultat, lignes }) {
     basis_total: resultat.base_totale,
     apartments_count: lignes.length,
     recharged_total: refacture,
-    owner_share: resultat.total - refacture,
+    provision_deducted_total: provisions,
+    owner_share: resultat.total - refacture - provisions,
     lines: lignes.map((l) => ({
       apartment_id: l.apartment_id,
       apartment_number: l.numero,
       basis_value: l.basis_value,
       share: l.share,
       amount: l.amount,
+      provision_deducted: l.provision_deducted,
+      net_amount: l.net,
       explanation: l.explanation,
       lease_id: l.bail?.id || null,
       tenant: l.bail ? { id: l.bail.tenant_id, first_name: l.bail.first_name, last_name: l.bail.last_name } : null,
@@ -429,10 +524,17 @@ async function notifierLocataires(t, ownerId, lignesParLocataire, { titre, corps
  * « repartie ». Une transaction, facture verrouillée : deux répartitions
  * simultanées ne peuvent pas produire deux jeux de lignes.
  */
-async function repartir(id, ownerId, params) {
+async function repartir(id, ownerId, user, params) {
   await sequelize.transaction(async (t) => {
     const invoice = await chargerPourProprietaire(ChargeInvoice, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, 'Facture commune');
     exigerBrouillon(invoice, 'la répartir à nouveau');
+    // Deux factures réparties en même temps ne déduisent pas deux fois la même provision.
+    await sequelize.query(
+      `SELECT l.id FROM leases l JOIN apartments a ON a.id = l.apartment_id
+        WHERE l.owner_id = :ownerId AND a.building_id = :buildingId AND l.status IN ('actif', 'termine', 'clos')
+        ORDER BY l.id FOR UPDATE OF l`,
+      { replacements: { ownerId, buildingId: invoice.building_id }, type: QueryTypes.SELECT, transaction: t }
+    );
     const calcul = await preparer(invoice, ownerId, params, t);
     const { resultat, lignes } = calcul;
 
@@ -446,6 +548,7 @@ async function repartir(id, ownerId, params) {
       basis_value: l.basis_value,
       share: l.share,
       amount: l.amount,
+      provision_deducted: l.provision_deducted,
       explanation: l.explanation,
     })), { transaction: t, returning: true });
 
@@ -464,15 +567,27 @@ async function repartir(id, ownerId, params) {
       charge_allocation_id: l.allocation.id,
       charge_type: invoice.charge_type,
       label: libelle,
-      amount: l.amount,
+      amount: l.net,
       amount_paid: 0,
       due_date: echeance,
-      status: statutCharge({ amount: l.amount, amount_paid: 0, due_date: echeance }, jour, grace ?? 0),
+      status: statutCharge({ amount: l.net, amount_paid: 0, due_date: echeance }, jour, grace ?? 0),
     })), { transaction: t, returning: true }) : [];
 
     await invoice.update({ status: 'repartie', allocated_at: new Date() }, { transaction: t });
 
+    const categorie = await categories.globaleParCode(CATEGORIE_DEPENSE[invoice.charge_type], t);
+    await depenses.creerDansTransaction(t, ownerId, user, {
+      building_id: invoice.building_id,
+      category_id: categorie.id,
+      amount: invoice.amount,
+      method: params.payment_method || 'autre',
+      spent_on: jour,
+      description: `Facture commune — ${libelle}`.slice(0, 500),
+      charge_invoice_id: id,
+    });
+
     const refacture = charges.reduce((s, c) => s + Number(c.amount), 0);
+    const provisionsDeduites = lignes.reduce((s, l) => s + l.provision_deducted, 0);
     await journaliser({
       action: 'facture_commune.repartition', entityType: 'charge_invoice', entityId: id, ownerId,
       details: {
@@ -483,7 +598,8 @@ async function repartir(id, ownerId, params) {
         total_reparti: lignes.reduce((s, l) => s + l.amount, 0),
         charges_creees: charges.length,
         refacture,
-        a_la_charge_du_proprietaire: resultat.total - refacture,
+        provisions_deduites: provisionsDeduites,
+        a_la_charge_du_proprietaire: resultat.total - refacture - provisionsDeduites,
       },
     }, t);
 
@@ -511,7 +627,7 @@ async function repartir(id, ownerId, params) {
  * été encaissée ni n'a de paiement en cours ; les charges générées passent
  * alors « annule ». Les lignes de répartition restent (historique).
  */
-async function annuler(id, ownerId, motif) {
+async function annuler(id, ownerId, user, motif) {
   return sequelize.transaction(async (t) => {
     const invoice = await chargerPourProprietaire(ChargeInvoice, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, 'Facture commune');
     if (invoice.status === 'annulee') throw new ConflictError('Facture déjà annulée', 'DEJA_ANNULE');
@@ -552,6 +668,9 @@ async function annuler(id, ownerId, motif) {
         );
       }
     }
+
+    const depense = await Expense.findOne({ where: { charge_invoice_id: id, status: 'valide' }, transaction: t, lock: t.LOCK.UPDATE });
+    if (depense) await depenses.annulerDansTransaction(t, depense, user, `Facture commune annulée : ${motif}`);
 
     // Le motif est conservé sur la facture (visible du propriétaire) et au journal.
     const trace = `Annulée le ${formatFr(aujourdhui())} : ${motif}`;

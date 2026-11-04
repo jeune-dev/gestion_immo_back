@@ -1,5 +1,8 @@
 'use strict';
 
+// Jeu de données daté de septembre 2026 : date du jour figée (voir le module).
+require('../../../setup/dateDuJour.js');
+
 const crypto = require('crypto');
 const {
   api, nouveauProprietaire, bailActif, fermer, sequelize, compter, pngTest,

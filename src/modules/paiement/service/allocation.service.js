@@ -158,11 +158,17 @@ async function enregistrerPaiement(t, {
     const e = await RentSchedule.findByPk(cible.rent_schedule_id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!e || e.lease_id !== lease.id) throw new ValidationError('Données invalides', ["L'échéance ne correspond pas à ce bail"]);
     if (e.status === 'annule') throw new ConflictError('Cette échéance est annulée', 'ECHEANCE_ANNULEE');
+    // Saisie sur une échéance soldée : c'est presque toujours un doublon, l'argent
+    // ne glisse pas en silence sur le mois suivant. Sans échéance choisie, l'imputation
+    // aux postes ouverts reste possible. Un paiement de fournisseur (`confirmation`)
+    // n'est jamais refusé : son excédent part en rapprochement.
+    if (excedent === 'fifo' && resteEcheance(e) <= 0) throw new ConflictError('Cette échéance est déjà soldée.', 'DEJA_PAYE');
     cibles.push(e);
   } else if (cible?.charge_id) {
     const c = await Charge.findByPk(cible.charge_id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!c || c.lease_id !== lease.id) throw new ValidationError('Données invalides', ['La charge ne correspond pas à ce bail']);
     if (c.status === 'annule') throw new ConflictError('Cette charge est annulée', 'CHARGE_ANNULEE');
+    if (excedent === 'fifo' && resteCharge(c) <= 0) throw new ConflictError('Cette charge est déjà soldée.', 'DEJA_PAYE');
     cibles.push(c);
   }
 
@@ -279,6 +285,9 @@ async function imputerCredit(t, entree) {
   if (resultat.reste > 0) {
     throw new ConflictError(`Aucune échéance ouverte ne peut absorber ${formatFcfa(resultat.reste)} : remboursez l’excédent.`, 'CREDIT_NON_IMPUTABLE');
   }
+  // L'excédent était entré en caisse comme loyer : la part imputée à des charges y change de catégorie.
+  const partCharges = resultat.allocations.filter((a) => a.charge_id).reduce((s, a) => s + a.amount, 0);
+  if (partCharges > 0) await caisse.reclasserLoyerEnCharges(t, paiement, partCharges);
   const recus = [];
   for (const e of resultat.echeancesSoldees) recus.push(await quittances.genererPourEcheance(t, e, await referencesDe(t, e.id)));
   return { allocations: resultat.allocations, quittances: recus };

@@ -340,8 +340,9 @@ describe('Caution (§ 55)', () => {
       expect(r.body.data.transaction).toMatchObject({ reason: 'loyer_impaye', occurred_on: '2026-12-01', contest_status: null });
       expect(await compter('audit_logs', "action = 'caution.retenue' AND entity_id = :id", { id: depositId })).toBe(1);
       expect(await compter('notifications', "user_id = :u AND type = 'caution' AND title = 'Retenue sur votre caution'", { u: locataire.user.id })).toBe(1);
-      // Aucune écriture de caisse : une retenue n'est pas un encaissement.
-      expect(await compter('cash_movements', "source_type = 'deposit_transaction' AND source_id = :id", { id: r.body.data.transaction.id })).toBe(0);
+      // La retenue sort du solde de caution en caisse ; pour impayé, elle crée le paiement qui solde le dû.
+      expect(await compter('cash_movements', "source_type = 'deposit_transaction' AND source_id = :id AND direction = 'sortie'", { id: r.body.data.transaction.id })).toBe(1);
+      expect(r.body.data.transaction.rent_payment_id).toBeTruthy();
 
       const reste = await retenir(p, depositId, 500000, [j], { reason: 'charges' });
       expect(reste.body.data.deposit).toMatchObject({ status: 'retenue_partielle', amount_withheld: 700000 });

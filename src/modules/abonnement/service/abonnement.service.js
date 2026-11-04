@@ -14,6 +14,9 @@ const { prochainNumero, pad } = require('../../../utils/compteur.js');
 const { aujourdhui, ajouterMois, debutMois, compacte, formatFr } = require('../../../utils/dates.js');
 const cache = require('../../../utils/cache.js');
 const logger = require('../../../utils/logger.js');
+
+/** Durée pendant laquelle une demande de paiement d'abonnement sans suite est réutilisée. */
+const DUREE_DEMANDE_OUVERTE_MS = 30 * 60 * 1000;
 const droits = require('./droits.service.js');
 const { journaliser } = require('../../audit/service/audit.service.js');
 const { notifier, destinatairesProprietaire } = require('../../notification/service/notification.service.js');
@@ -161,6 +164,21 @@ async function souscrire(ownerId, user, { plan_code: planCode, months, wallet = 
   const montant = Number(plan.price) * months;
   if (montant <= 0) {
     throw new ConflictError("Cette formule sans frais est activée par l'administrateur, sans paiement.", 'PLAN_GRATUIT');
+  }
+
+  // Double envoi, retour dans l'application : la demande encore ouverte est
+  // réutilisée au lieu d'en créer une seconde à payer.
+  const ouverte = await SubscriptionPayment.findOne({
+    where: {
+      owner_id: ownerId, plan_id: plan.id, months, status: 'initie',
+      checkout_url: { [Op.ne]: null }, created_at: { [Op.gt]: new Date(Date.now() - DUREE_DEMANDE_OUVERTE_MS) },
+    },
+    order: [['created_at', 'DESC']],
+  });
+  if (ouverte) {
+    const payment = ouverte.toJSON();
+    delete payment.raw_payload;
+    return { payment, checkout_url: ouverte.checkout_url, reutilisee: true };
   }
 
   const paiement = await sequelize.transaction(async (t) => {

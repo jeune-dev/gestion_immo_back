@@ -6,14 +6,22 @@ const {
 const email = require('../../../../infrastructure/email.service.js');
 
 /**
- * § 5 « mot de passe oublié » : code à 6 chiffres, 15 minutes, essais
- * plafonnés, usage unique, sessions fermées après réinitialisation.
+ * § 5 « mot de passe oublié », en trois étapes comme Yobante : demande →
+ * vérification du code → nouveau mot de passe. Code de 8 caractères (lettres
+ * et chiffres), 15 minutes, essais plafonnés, usage unique, sessions fermées
+ * après réinitialisation.
  * Le code est intercepté à l'envoi de l'e-mail (seul endroit où il existe en
  * clair).
  */
 
 const OUBLI = '/api/v1/auth/mot-de-passe-oublie';
+const VERIF = '/api/v1/auth/verifier-code';
 const REINIT = '/api/v1/auth/reinitialiser-mot-de-passe';
+/** Un code de même format, différent de `code` (« faux n° i »). */
+const autreCode = (code, i = 0) => {
+  const faux = `F${String(i).padStart(7, '0')}`;
+  return faux === code ? `G${String(i).padStart(7, '0')}` : faux;
+};
 const NOUVEAU = 'NouveauMdp9';
 
 let envoi;
@@ -32,16 +40,22 @@ async function demanderCode(identifiant) {
 
 const reinitialiser = (identifiant, code, password = NOUVEAU) => api().post(REINIT)
   .send({ identifiant, code, password, password_confirmation: password });
+const verifier = (identifiant, code) => api().post(VERIF).send({ identifiant, code });
 
 describe('Mot de passe oublié', () => {
   test('parcours complet : code envoyé, mot de passe changé, toutes les sessions fermées, audit, ancien mot de passe refusé', async () => {
     const p = await nouveauProprietaire();
     await sequelize.query("UPDATE users SET must_change_password = true, failed_login_attempts = 3 WHERE id = :u", { replacements: { u: p.user.id } });
     const code = await demanderCode(p.identifiants.email);
-    expect(code).toMatch(/^\d{6}$/);
+    expect(code).toMatch(/^[A-Z0-9]{8}$/);
     expect(envoi.mock.calls[0][0]).toMatchObject({ email: p.identifiants.email, minutes: 15 });
     const [[demande]] = await sequelize.query('SELECT otp_hash, expires_at FROM password_resets WHERE user_id = :u', { replacements: { u: p.user.id } });
     expect(demande.otp_hash).not.toContain(code);
+
+    // Étape 2 : code vérifié (saisi en minuscules, avec un espace), sans être consommé.
+    const verif = await verifier(p.identifiants.email, `${code.slice(0, 4).toLowerCase()} ${code.slice(4)}`);
+    expect(verif.status).toBe(200);
+    expect(await compter('password_resets', 'user_id = :u AND used_at IS NULL', { u: p.user.id })).toBe(1);
 
     const res = await reinitialiser(p.identifiants.phone, code);
     expect(res.status).toBe(200);
@@ -82,15 +96,19 @@ describe('Mot de passe oublié', () => {
   test('essais plafonnés : 5 codes faux puis le bon → refusé (compteur persisté)', async () => {
     const p = await nouveauProprietaire();
     const code = await demanderCode(p.identifiants.email);
-    const faux = code === '000000' ? '111111' : '000000';
+    const faux = autreCode(code);
+    // Les essais de l'étape « vérifier » et de l'étape « réinitialiser » partagent le même plafond.
     for (let i = 0; i < 5; i += 1) {
-      const res = await reinitialiser(p.identifiants.email, faux);
+      const res = i % 2 ? await verifier(p.identifiants.email, faux) : await reinitialiser(p.identifiants.email, faux);
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('CODE_INVALIDE');
     }
     const [[d]] = await sequelize.query('SELECT attempts FROM password_resets WHERE user_id = :u', { replacements: { u: p.user.id } });
     expect(d.attempts).toBe(5);
-    expect((await reinitialiser(p.identifiants.email, code)).status).toBe(400);
+    const epuise = await reinitialiser(p.identifiants.email, code);
+    expect(epuise.status).toBe(400);
+    expect(epuise.body.error.code).toBe('CODE_EPUISE');
+    expect(epuise.body.message).toMatch(/Demandez-en un nouveau/);
     expect((await api().post('/api/v1/auth/connexion').send({ identifiant: p.identifiants.email, password: MOT_DE_PASSE })).status).toBe(200);
   });
 
@@ -108,7 +126,7 @@ describe('Mot de passe oublié', () => {
     const codeA = await demanderCode(a.identifiants.email);
     await demanderCode(b.identifiants.email);
     const res = await reinitialiser(b.identifiants.email, codeA);
-    // Probabilité de collision 1/10^6 : si les deux codes coïncident, le test n'a pas de sens.
+    // Probabilité de collision 1/36^8 : si les deux codes coïncident, le test n'a pas de sens.
     if (res.status !== 200) expect(res.status).toBe(400);
   });
 
@@ -123,11 +141,11 @@ describe('Mot de passe oublié', () => {
   });
 
   test.each([
-    ['identifiant manquant', { code: '123456', password: NOUVEAU, password_confirmation: NOUVEAU }],
-    ['code à 5 chiffres', { identifiant: 'a@test.sn', code: '12345', password: NOUVEAU, password_confirmation: NOUVEAU }],
-    ['code non numérique', { identifiant: 'a@test.sn', code: 'abcdef', password: NOUVEAU, password_confirmation: NOUVEAU }],
-    ['mot de passe faible', { identifiant: 'a@test.sn', code: '123456', password: 'faible', password_confirmation: 'faible' }],
-    ['confirmation différente', { identifiant: 'a@test.sn', code: '123456', password: NOUVEAU, password_confirmation: 'Autre1234' }],
+    ['identifiant manquant', { code: 'ABCD1234', password: NOUVEAU, password_confirmation: NOUVEAU }],
+    ['code de 7 caractères', { identifiant: 'a@test.sn', code: 'ABCD123', password: NOUVEAU, password_confirmation: NOUVEAU }],
+    ['code avec symbole', { identifiant: 'a@test.sn', code: 'ABCD-123', password: NOUVEAU, password_confirmation: NOUVEAU }],
+    ['mot de passe faible', { identifiant: 'a@test.sn', code: 'ABCD1234', password: 'faible', password_confirmation: 'faible' }],
+    ['confirmation différente', { identifiant: 'a@test.sn', code: 'ABCD1234', password: NOUVEAU, password_confirmation: 'Autre1234' }],
     ['corps vide', {}],
   ])('validation 422 : %s', async (_l, corps) => {
     expect((await api().post(REINIT).send(corps)).status).toBe(422);
@@ -138,10 +156,21 @@ describe('Mot de passe oublié', () => {
     expect((await api().post(OUBLI).send({ identifiant: 'a'.repeat(255) })).status).toBe(422);
   });
 
+  test('vérification : code mal formé → 422, code faux → 400, code expiré → 400', async () => {
+    const p = await nouveauProprietaire();
+    expect((await verifier(p.identifiants.email, '123')).status).toBe(422);
+    expect((await verifier(undefined, 'ABCD1234')).status).toBe(422);
+    const code = await demanderCode(p.identifiants.email);
+    expect((await verifier(p.identifiants.email, autreCode(code))).status).toBe(400);
+    await sequelize.query("UPDATE password_resets SET expires_at = now() - interval '1 second' WHERE user_id = :u", { replacements: { u: p.user.id } });
+    expect((await verifier(p.identifiants.email, code)).status).toBe(400);
+  });
+
   test('compte inconnu : 400 CODE_INVALIDE (même réponse qu’un code faux)', async () => {
-    const res = await reinitialiser('inconnu@test.sn', '123456');
+    const res = await reinitialiser('inconnu@test.sn', 'ABCD1234');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('CODE_INVALIDE');
+    expect((await verifier('inconnu@test.sn', 'ABCD1234')).body.error.code).toBe('CODE_INVALIDE');
   });
 
   // ── CORRECTIF E2 (audit de sécurité) : force brute par requêtes simultanées ──
@@ -149,7 +178,7 @@ describe('Mot de passe oublié', () => {
   test('CORRECTIF E2 : 20 codes faux SIMULTANÉS → jamais plus de 5 essais comptés, puis le bon code est refusé', async () => {
     const p = await nouveauProprietaire();
     const code = await demanderCode(p.identifiants.email);
-    const faux = Array.from({ length: 20 }, (_, i) => String((Number(code) + 1 + i) % 1_000_000).padStart(6, '0'));
+    const faux = Array.from({ length: 20 }, (_, i) => autreCode(code, i + 1));
     const res = await Promise.all(faux.map((c) => reinitialiser(p.identifiants.email, c)));
     expect(res.every((r) => r.status === 400)).toBe(true);
     const [[demande]] = await sequelize.query('SELECT attempts FROM password_resets WHERE user_id = :u AND used_at IS NULL', { replacements: { u: p.user.id } });

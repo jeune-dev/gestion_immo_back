@@ -4,7 +4,7 @@ const { Op } = require('sequelize');
 const sequelize = require('../../../config/db.js');
 const {
   RentPayment, PaymentAllocation, PaymentTransaction, PaymentProvider, Lease, Tenant, Apartment, Building,
-  RentSchedule, Charge, Receipt, ReconciliationEntry, Document,
+  RentSchedule, Charge, Receipt, ReconciliationEntry, Document, DepositTransaction,
 } = require('../../../models/index.js');
 const { chargerPourProprietaire, verifierReference } = require('../../../utils/acces.js');
 const { ordre, periode } = require('../../../utils/liste.js');
@@ -93,6 +93,9 @@ async function rembourser(ownerId, user, id, { reason, method }) {
   return sequelize.transaction(async (t) => {
     const paiement = await chargerPourProprietaire(RentPayment, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, 'Paiement');
     if (paiement.status !== 'valide') throw new ConflictError('Ce paiement est déjà remboursé', 'DEJA_REMBOURSE');
+    if (await DepositTransaction.count({ where: { rent_payment_id: id }, transaction: t })) {
+      throw new ConflictError('Ce paiement vient d’une retenue sur caution : il se corrige depuis la caution.', 'PAIEMENT_DE_RETENUE');
+    }
 
     // Excédent DÉJÀ rendu au payeur (entrée « excedent » rejetée = sortie de
     // caisse inscrite à ce moment-là) : il ne sort pas une seconde fois. La

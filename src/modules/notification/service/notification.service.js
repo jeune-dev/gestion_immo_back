@@ -8,6 +8,7 @@ const parametres = require('../../parametres/service/parametres.service.js');
 const { DEFAUTS_PROPRIETAIRE } = require('../../../config/parametres.js');
 const { masquerTelephone } = require('../../../utils/telephone.js');
 const { lancer } = require('../../../utils/arrierePlan.js');
+const { invaliderTableauDeBord } = require('../../../utils/cache.js');
 const logger = require('../../../utils/logger.js');
 
 /**
@@ -43,6 +44,9 @@ const logger = require('../../../utils/logger.js');
  * @param {{ evenement: string, parametres: string[] }} [n.whatsapp]
  */
 async function notifier(t, { destinataires, ownerId, type, titre, corps, donnees = {}, whatsapp: whatsappMessage = null }) {
+  // Un événement notifié (preuve déposée, incident, webhook) change les compteurs du tableau de bord.
+  if (ownerId && t) t.afterCommit(() => invaliderTableauDeBord(ownerId));
+  else if (ownerId) invaliderTableauDeBord(ownerId);
   const uniques = dedoublonner(destinataires);
   const notifications = [];
   for (const d of uniques) {

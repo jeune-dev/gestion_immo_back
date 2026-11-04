@@ -9,7 +9,7 @@ const { MOIS_PAR_PERIODICITE } = require('../../../config/enums.js');
 const { chargerPourProprietaire, verifierReference } = require('../../../utils/acces.js');
 const { ordre } = require('../../../utils/liste.js');
 const { prochainNumero, pad } = require('../../../utils/compteur.js');
-const { aujourdhui, ajouterJours, formatFr } = require('../../../utils/dates.js');
+const { aujourdhui, ajouterJours, ecartJours, formatFr } = require('../../../utils/dates.js');
 const { ConflictError, ValidationError } = require('../../../errors/AppError.js');
 const { transactionAvecFichiers } = require('../../../database/transaction.js');
 const echeances = require('../../loyer/service/echeance.service.js');
@@ -171,6 +171,30 @@ async function annuler(id, ownerId, motif) {
   });
 }
 
+/**
+ * Période en cours à la sortie : proratisée au jour, comme une période coupée par
+ * la date de fin du bail. Un montant déjà payé au-delà du prorata reste intact
+ * (le trop-perçu se traite par remboursement, jamais par une échéance négative).
+ * @returns {Promise<string|null>} id de l'échéance proratisée
+ */
+async function proratiserPeriodeDeSortie(leaseId, dateSortie, reglages, t) {
+  const e = await RentSchedule.findOne({
+    where: {
+      lease_id: leaseId, period_start: { [Op.lte]: dateSortie }, period_end: { [Op.gt]: dateSortie }, status: { [Op.notIn]: ['annule', 'paye'] },
+    },
+    transaction: t,
+    lock: t.LOCK.UPDATE,
+  });
+  if (!e) return null;
+  const ratio = (ecartJours(e.period_start, dateSortie) + 1) / (ecartJours(e.period_start, e.period_end) + 1);
+  const rent = Math.round(e.rent_amount * ratio);
+  const charges = Math.round(e.charges_amount * ratio);
+  if (rent + charges <= e.amount_paid) return null;
+  const valeurs = { rent_amount: rent, charges_amount: charges, amount_due: rent + charges, period_end: dateSortie };
+  await e.update({ ...valeurs, status: echeances.statutA({ ...e.toJSON(), ...valeurs }, aujourdhui(), reglages) }, { transaction: t });
+  return e.id;
+}
+
 /** Fin du bail (départ du locataire). */
 async function terminer(id, ownerId, { ended_on: dateSortie, termination_reason: motif }) {
   return sequelize.transaction(async (t) => {
@@ -200,6 +224,7 @@ async function terminer(id, ownerId, { ended_on: dateSortie, termination_reason:
     await Apartment.update({ status: 'disponible' }, { where: { id: lease.apartment_id }, transaction: t });
 
     const reglages = await parametres.proprietaire(ownerId, t);
+    const proratisee = await proratiserPeriodeDeSortie(id, dateSortie, reglages, t);
     const deposit = await Deposit.findOne({ where: { lease_id: id }, transaction: t, lock: t.LOCK.UPDATE });
     if (deposit) {
       await deposit.update({
@@ -209,7 +234,7 @@ async function terminer(id, ownerId, { ended_on: dateSortie, termination_reason:
       }, { transaction: t });
     }
 
-    await journaliser({ action: 'bail.changement_statut', entityType: 'lease', entityId: id, ownerId, details: { avant: 'actif', apres: 'termine', date_sortie: dateSortie, echeances_annulees: annulees } }, t);
+    await journaliser({ action: 'bail.changement_statut', entityType: 'lease', entityId: id, ownerId, details: { avant: 'actif', apres: 'termine', date_sortie: dateSortie, echeances_annulees: annulees, echeance_proratisee: proratisee } }, t);
 
     // § 55.4 — alerte au propriétaire pour lancer le décompte de la caution.
     if (deposit && deposit.amount_received > 0) {

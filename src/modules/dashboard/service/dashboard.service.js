@@ -9,7 +9,7 @@ const {
   FUSEAU, aujourdhui, ajouterMois, debutMois, finMois,
 } = require('../../../utils/dates.js');
 const {
-  IMMEUBLE, DEBUT_JOUR, FIN_JOUR, ECHEANCE_IMPAYEE, ENCAISSEMENTS, AUTRES_REVENUS, DEPENSES, DEPENSES_PAR_CATEGORIE,
+  IMMEUBLE, DEBUT_JOUR, FIN_JOUR, ECHEANCE_IMPAYEE, CHARGE_IMPAYEE, STATUTS_TRAVAUX_EN_COURS, ENCAISSEMENTS, AUTRES_REVENUS, DEPENSES, DEPENSES_PAR_CATEGORIE,
   pourcentage,
 } = require('../../rapport/service/indicateurs.js');
 
@@ -27,7 +27,6 @@ const {
  */
 
 const TTL_S = 45;
-const STATUTS_TRAVAUX_EN_COURS = "('valide', 'artisan_assigne', 'en_cours')";
 
 /**
  * Cache « lecture, sinon calcul unique puis écriture ». La clé inclut le jour
@@ -56,6 +55,9 @@ const SQL_CHIFFRES = `
       WHERE b.owner_id = :ownerId AND b.deleted_at IS NULL AND ${IMMEUBLE('b.id')}) AS immeubles,
     ap.appartements, ap.occupes, ap.disponibles, ap.en_travaux, ap.indisponibles,
     lo.a_recevoir, lo.encaisses, lo.impayes,
+    (SELECT COALESCE(sum(c.amount - c.amount_paid), 0) FROM charges c
+       JOIN apartments a ON a.id = c.apartment_id
+      WHERE c.owner_id = :ownerId AND ${CHARGE_IMPAYEE} AND ${IMMEUBLE('a.building_id')}) AS charges_impayees,
     en.revenus_loyers, en.revenus_charges,
     (SELECT COALESCE(sum(amount), 0) FROM (${AUTRES_REVENUS}) ar) AS revenus_autres,
     (SELECT COALESCE(sum(amount), 0) FROM (${DEPENSES}) dep) AS depenses,
@@ -102,20 +104,28 @@ const SQL_CHIFFRES = `
 
 /** § 48 « Qui n'a pas payé ? » — les dix plus gros retards, par locataire et logement. */
 const SQL_DEBITEURS = `
-  SELECT rs.tenant_id, t.first_name, t.last_name, t.phone,
-         rs.apartment_id, a.number AS apartment_number, b.id AS building_id, b.name AS building_name,
-         sum(rs.amount_due - rs.amount_paid) AS montant,
+  WITH dus AS (
+    SELECT rs.tenant_id, rs.apartment_id, rs.amount_due - rs.amount_paid AS reste, rs.due_date
+      FROM rent_schedules rs
+     WHERE rs.owner_id = :ownerId AND rs.status IN ('en_retard', 'partiellement_paye') AND ${ECHEANCE_IMPAYEE}
+    UNION ALL
+    SELECT c.tenant_id, c.apartment_id, c.amount - c.amount_paid, c.due_date
+      FROM charges c
+     WHERE c.owner_id = :ownerId AND ${CHARGE_IMPAYEE}
+  )
+  SELECT d.tenant_id, t.first_name, t.last_name, t.phone,
+         d.apartment_id, a.number AS apartment_number, b.id AS building_id, b.name AS building_name,
+         sum(d.reste) AS montant,
          count(*) AS echeances,
-         min(rs.due_date)::text AS plus_ancienne_echeance,
+         min(d.due_date)::text AS plus_ancienne_echeance,
          count(*) OVER () AS total_debiteurs
-    FROM rent_schedules rs
-    JOIN tenants t ON t.id = rs.tenant_id
-    JOIN apartments a ON a.id = rs.apartment_id
+    FROM dus d
+    JOIN tenants t ON t.id = d.tenant_id
+    JOIN apartments a ON a.id = d.apartment_id
     JOIN buildings b ON b.id = a.building_id
-   WHERE rs.owner_id = :ownerId AND rs.status IN ('en_retard', 'partiellement_paye')
-     AND ${ECHEANCE_IMPAYEE} AND ${IMMEUBLE('a.building_id')}
-   GROUP BY rs.tenant_id, t.first_name, t.last_name, t.phone, rs.apartment_id, a.number, b.id, b.name
-   ORDER BY montant DESC, plus_ancienne_echeance ASC, rs.tenant_id, rs.apartment_id
+   WHERE ${IMMEUBLE('a.building_id')}
+   GROUP BY d.tenant_id, t.first_name, t.last_name, t.phone, d.apartment_id, a.number, b.id, b.name
+   ORDER BY montant DESC, plus_ancienne_echeance ASC, d.tenant_id, d.apartment_id
    LIMIT 10`;
 
 /** § 48 « Quel appartement coûte le plus cher ? » — dépenses des 12 derniers mois. */
@@ -212,6 +222,7 @@ async function calculerTableauDeBord(ownerId, buildingId, mois, jour) {
     // Loyers du mois par date d'échéance (§ 6 « à recevoir / encaissés ») ;
     // impayés = tout le reste dû échu, quel que soit le mois (§ 4 obj. 18).
     loyers: { a_recevoir: c.a_recevoir, encaisses: c.encaisses, impayes: c.impayes },
+    charges_impayees: c.charges_impayees,
     // § 48 « Combien ai-je encaissé ? » — trésorerie réellement reçue dans le
     // mois, caution exclue (§ 55.4).
     revenus: {

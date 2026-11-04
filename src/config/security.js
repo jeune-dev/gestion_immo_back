@@ -113,29 +113,55 @@ const bcryptConfig = {
   saltRounds: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
 };
 
-/** Verrouillage de compte après échecs successifs (anti force brute, § 32). */
+/**
+ * Verrouillage de compte après échecs successifs (anti force brute, § 32).
+ *
+ * PROGRESSIF : chaque série de `maxTentatives` échecs bloque le compte un
+ * peu plus longtemps (par défaut 1 min, puis 5 min, puis 15 min). Une faute
+ * de frappe ne coûte plus 15 minutes à un utilisateur légitime, alors qu'un
+ * attaquant reste limité à quelques essais par quart d'heure. Le compteur
+ * repart de zéro à la première connexion réussie (ou par « mot de passe
+ * oublié », ou par un super admin).
+ */
+const paliers = (process.env.LOGIN_BLOCAGE_PALIERS_MINUTES || '1,5,15')
+  .split(',').map((m) => parseInt(m, 10)).filter((m) => m > 0);
 const verrouillageConfig = {
   maxTentatives: parseInt(process.env.LOGIN_MAX_TENTATIVES || '5', 10),
-  dureeMinutes: parseInt(process.env.LOGIN_BLOCAGE_MINUTES || '15', 10),
+  paliersMinutes: paliers.length ? paliers : [1, 5, 15],
 };
+
+/** « 1 minute », « 4 minutes » — délai restant arrondi à la minute supérieure. */
+function formaterDelai(ms) {
+  const minutes = Math.max(1, Math.ceil(ms / 60000));
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+}
 
 /**
  * Corps d'une réponse 429 — même enveloppe que le gestionnaire d'erreurs.
+ * `{delai}` est remplacé par le temps RÉELLEMENT restant avant la fin de la
+ * fenêtre (et non sa durée totale : « 15 minutes » affiché à qui n'avait plus
+ * qu'une minute à attendre).
  * @param {string} texte
+ * @param {number} windowMs
  */
-const reponseLimite = (texte) => (req) => ({
-  success: false,
-  message: texte,
-  error: { code: 'TROP_DE_REQUETES', message: texte },
-  ...(req?.id ? { requestId: req.id } : {}),
-});
+const reponseLimite = (texte, windowMs) => (req) => {
+  const reset = req?.rateLimit?.resetTime;
+  const message = texte.replace('{delai}', formaterDelai(reset ? reset.getTime() - Date.now() : windowMs));
+  return {
+    success: false,
+    message,
+    error: { code: 'TROP_DE_REQUETES', message },
+    ...(req?.id ? { requestId: req.id } : {}),
+  };
+};
 
-const limite = (windowMin, max, texte) => ({
+const limite = (windowMin, max, texte, options = {}) => ({
   windowMs: windowMin * 60 * 1000,
   max,
   standardHeaders: true,
   legacyHeaders: false,
-  message: reponseLimite(texte),
+  message: reponseLimite(texte, windowMin * 60 * 1000),
+  ...options,
 });
 
 const env = (cle, defaut) => parseInt(process.env[cle] || String(defaut), 10);
@@ -145,19 +171,39 @@ const rateLimitConfig = limite(15, env('RATE_LIMIT_GLOBAL_MAX', 1000), 'Trop de 
 /** Par utilisateur authentifié. */
 const authenticatedRateLimitConfig = limite(15, env('RATE_LIMIT_UTILISATEUR_MAX', 600), 'Trop de requêtes. Veuillez réessayer dans quelques minutes.');
 /** Tentatives d'authentification (connexion, inscription, OTP, activation). */
-const authRateLimitConfig = limite(env('AUTH_RATE_LIMIT_WINDOW_MIN', 15), env('AUTH_RATE_LIMIT_MAX', 10), 'Trop de tentatives. Veuillez réessayer dans 15 minutes.');
+// Seuls les ÉCHECS comptent (`skipSuccessfulRequests`) : au Sénégal, des
+// centaines d'abonnés mobiles partagent la même IP publique (NAT opérateur).
+// Compter aussi les connexions réussies bloquait tout un quartier après
+// quelques connexions normales. Chaque compte reste protégé individuellement
+// par le verrouillage progressif (verrouillageConfig).
+const authRateLimitConfig = limite(
+  env('AUTH_RATE_LIMIT_WINDOW_MIN', 15), env('AUTH_RATE_LIMIT_MAX', 10),
+  'Trop de tentatives incorrectes depuis ce réseau. Réessayez dans {delai}.',
+  {
+    skipSuccessfulRequests: true,
+    // 429 (compte déjà bloqué) : aucun mot de passe n'a été essayé ; un
+    // utilisateur qui réessaie pendant son blocage n'use pas le quota du réseau.
+    requestWasSuccessful: (req, res) => res.statusCode < 400 || res.statusCode === 429,
+  }
+);
 /** Cycle de session (refresh, logout) — plus large : exige déjà un jeton valide. */
 const sessionRateLimitConfig = limite(15, env('SESSION_RATE_LIMIT_MAX', 120), 'Trop de requêtes de session. Veuillez réessayer dans quelques minutes.');
 /** Mutations sensibles (mot de passe, sessions). */
-const mutationRateLimitConfig = limite(15, env('MUTATION_RATE_LIMIT_MAX', 30), 'Trop de requêtes. Veuillez réessayer dans 15 minutes.');
+const mutationRateLimitConfig = limite(15, env('MUTATION_RATE_LIMIT_MAX', 30), 'Trop de requêtes. Réessayez dans {delai}.');
 /** Paiements (initiation, preuve) : bornés par utilisateur. */
 const paiementRateLimitConfig = limite(15, env('PAIEMENT_RATE_LIMIT_MAX', 30), 'Trop de demandes de paiement. Réessayez dans quelques minutes.');
 /** Webhooks fournisseurs : volume élevé mais borné. */
 const webhookRateLimitConfig = limite(1, env('WEBHOOK_RATE_LIMIT_MAX', 300), 'Trop de notifications.');
 /** Super admin. */
 const adminRateLimitConfig = limite(15, env('ADMIN_RATE_LIMIT_MAX', 600), 'Trop de requêtes admin. Veuillez réessayer.');
-/** OTP par identifiant ciblé (anti ciblage multi-IP). */
-const otpCibleRateLimitConfig = limite(15, env('OTP_CIBLE_RATE_LIMIT_MAX', 3), 'Trop de demandes pour ce compte. Réessayez dans 15 minutes.');
+/** Codes envoyés par compte visé (anti-spam d'e-mails, anti ciblage multi-IP). */
+const otpCibleRateLimitConfig = limite(15, env('OTP_CIBLE_RATE_LIMIT_MAX', 3), 'Trop de codes demandés pour ce compte. Réessayez dans {delai}.');
+/**
+ * Demandes de code « mot de passe oublié » par IP. Plus large que Yobante
+ * (3 / h) : derrière le NAT d'un opérateur mobile, une même IP regroupe de
+ * nombreux abonnés ; le spam d'un compte est borné par otpCibleRateLimitConfig.
+ */
+const motDePasseOublieRateLimitConfig = limite(60, env('MOT_DE_PASSE_OUBLIE_RATE_LIMIT_MAX', 10), 'Trop de demandes de réinitialisation depuis ce réseau. Réessayez dans {delai}.');
 
 const corsConfig = {
   origin: originesCors.length ? originesCors : ['http://localhost:5173'],
@@ -202,6 +248,7 @@ module.exports = {
   cleHmac,
   bcryptConfig,
   verrouillageConfig,
+  formaterDelai,
   reponseLimite,
   rateLimitConfig,
   authenticatedRateLimitConfig,
@@ -212,6 +259,7 @@ module.exports = {
   webhookRateLimitConfig,
   adminRateLimitConfig,
   otpCibleRateLimitConfig,
+  motDePasseOublieRateLimitConfig,
   televersementRateLimitConfig,
   rapportRateLimitConfig,
   corsConfig,

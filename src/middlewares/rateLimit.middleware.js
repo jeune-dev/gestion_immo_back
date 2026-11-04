@@ -14,6 +14,7 @@ const {
   mutationRateLimitConfig,
   adminRateLimitConfig,
   otpCibleRateLimitConfig,
+  motDePasseOublieRateLimitConfig,
   authenticatedRateLimitConfig,
   paiementRateLimitConfig,
   webhookRateLimitConfig,
@@ -215,13 +216,19 @@ function cleCibleOtp(req) {
   return tel ? `tel:${tel}` : `brut:${brut.toLowerCase()}`;
 }
 
-// OTP / activation par IDENTIFIANT ciblé (anti ciblage multi-IP).
+// OTP / activation par IDENTIFIANT ciblé (anti ciblage multi-IP). Un compteur
+// PAR ROUTE : demander un code puis se tromper deux fois en le recopiant ne
+// doit pas épuiser le quota de la demande (chaque code a de plus son propre
+// plafond d'essais, auth.service `reinitialiserMotDePasse`).
 const otpCibleRateLimit = rateLimit({
   ...otpCibleRateLimitConfig,
   ...optionsStore('otp'),
-  keyGenerator: (req, res) => cleCibleOtp(req) || ipKeyGenerator(req, res),
+  keyGenerator: (req, res) => `${req.path}:${cleCibleOtp(req) || ipKeyGenerator(req, res)}`,
   skip: (req) => !(req.body?.identifiant || req.body?.email || req.body?.telephone),
 });
+
+// Demandes de code « mot de passe oublié » — par IP.
+const motDePasseOublieRateLimit = rateLimit({ ...motDePasseOublieRateLimitConfig, ...optionsStore('mot_de_passe_oublie') });
 
 // Routes authentifiées — par UTILISATEUR (plusieurs comptes derrière la même
 // IP 4G ne se bloquent pas mutuellement).
@@ -233,6 +240,6 @@ const authenticatedRateLimit = rateLimit({
 
 module.exports = {
   authRateLimit, sessionRateLimit, mutationRateLimit, adminRateLimit,
-  paiementRateLimit, webhookRateLimit, otpCibleRateLimit, authenticatedRateLimit,
+  paiementRateLimit, webhookRateLimit, otpCibleRateLimit, motDePasseOublieRateLimit, authenticatedRateLimit,
   televersementRateLimit, rapportRateLimit, StoreRedisResilient, journalStore, cleCibleOtp, journaliserDepassement,
 };
