@@ -83,8 +83,9 @@ exports.rafraichir = asyncHandler(async (req, res) => {
   if (!jeton) throw new UnauthorizedError('Session absente, veuillez vous reconnecter', 'SESSION_ABSENTE');
   const resultat = await sessions.rafraichir(jeton, meta(req));
   if (!resultat.ok) {
-    res.clearCookie('refresh_token', cookieRefresh);
-    throw new UnauthorizedError(resultat.motif, 'SESSION_INVALIDE');
+    // Refus passager (rotation à l'instant) : la session reste valable.
+    if (!resultat.code) res.clearCookie('refresh_token', cookieRefresh);
+    throw new UnauthorizedError(resultat.motif, resultat.code || 'SESSION_INVALIDE');
   }
   return repondreSession(req, res, { user: resultat.user, session: resultat }, 'Session renouvelée');
 });

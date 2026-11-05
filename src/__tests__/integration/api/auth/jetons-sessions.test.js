@@ -179,6 +179,84 @@ describe('Refresh', () => {
     expect(await compter('refresh_tokens', 'user_id = :u AND revoked_at IS NULL', { u: p.user.id })).toBe(succes.length);
   });
 
+  describe('réponse de rotation perdue', () => {
+    const vieillirRotations = (u, duree) => sequelize.query(
+      'UPDATE refresh_tokens SET revoked_at = now() - CAST(:duree AS interval) WHERE user_id = :u AND revoked_at IS NOT NULL',
+      { replacements: { u, duree } }
+    );
+    const actives = (u) => compter('refresh_tokens', 'user_id = :u AND revoked_at IS NULL', { u });
+
+    test('à l’instant de la rotation : refus passager, la session reste valable', async () => {
+      const p = await nouveauProprietaire();
+      const perdue = await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      const res = await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('SESSION_DEJA_RENOUVELEE');
+      expect((await api().post(REFRESH).send({ refresh_token: perdue.body.data.refresh_token })).status).toBe(200);
+    });
+
+    test('nouvel essai dans le délai : session reprise, une seule active, autres appareils intacts', async () => {
+      const p = await nouveauProprietaire();
+      const autre = await api().post('/api/v1/auth/connexion').send({ identifiant: p.identifiants.email, password: MOT_DE_PASSE });
+      await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      await vieillirRotations(p.user.id, '1 minute');
+      const res = await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      expect(res.status).toBe(200);
+      expect((await api().get(COMPTE).set(bearer(res.body.data.access_token))).status).toBe(200);
+      expect(await actives(p.user.id)).toBe(2);
+      expect((await api().get(COMPTE).set(p.h)).status).toBe(200);
+      expect((await api().post(REFRESH).send({ refresh_token: autre.body.data.refresh_token })).status).toBe(200);
+      expect((await api().post(REFRESH).send({ refresh_token: res.body.data.refresh_token })).status).toBe(200);
+    });
+
+    test('après le délai : cette session seule est fermée, sans révoquer le compte', async () => {
+      const p = await nouveauProprietaire();
+      const autre = await api().post('/api/v1/auth/connexion').send({ identifiant: p.identifiants.email, password: MOT_DE_PASSE });
+      await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      await vieillirRotations(p.user.id, '1 hour');
+      expect((await api().post(REFRESH).send({ refresh_token: p.refreshToken })).status).toBe(401);
+      expect(await actives(p.user.id)).toBe(1);
+      expect((await api().get(COMPTE).set(p.h)).status).toBe(200);
+      expect((await api().post(REFRESH).send({ refresh_token: autre.body.data.refresh_token })).status).toBe(200);
+    });
+
+    test('successeur déjà utilisé : rejeu, toutes les sessions sont fermées', async () => {
+      const p = await nouveauProprietaire();
+      const s1 = await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      await api().post(REFRESH).send({ refresh_token: s1.body.data.refresh_token });
+      await vieillirRotations(p.user.id, '1 minute');
+      expect((await api().post(REFRESH).send({ refresh_token: p.refreshToken })).status).toBe(401);
+      expect(await actives(p.user.id)).toBe(0);
+    });
+
+    test('jeton écarté par une reprise puis présenté : rejeu, toutes les sessions sont fermées', async () => {
+      const p = await nouveauProprietaire();
+      const ecarte = await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      await vieillirRotations(p.user.id, '1 minute');
+      expect((await api().post(REFRESH).send({ refresh_token: p.refreshToken })).status).toBe(200);
+      await vieillirRotations(p.user.id, '1 minute');
+      expect((await api().post(REFRESH).send({ refresh_token: ecarte.body.data.refresh_token })).status).toBe(401);
+      expect(await actives(p.user.id)).toBe(0);
+    });
+
+    test('session fermée entre-temps : pas de reprise', async () => {
+      const p = await nouveauProprietaire();
+      const s1 = await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      await api().post(DECONNEXION).send({ refresh_token: s1.body.data.refresh_token });
+      await vieillirRotations(p.user.id, '1 minute');
+      expect((await api().post(REFRESH).send({ refresh_token: p.refreshToken })).status).toBe(401);
+      expect(await actives(p.user.id)).toBe(0);
+    });
+
+    test('compte désactivé : pas de reprise', async () => {
+      const p = await nouveauProprietaire();
+      await api().post(REFRESH).send({ refresh_token: p.refreshToken });
+      await vieillirRotations(p.user.id, '1 minute');
+      await sequelize.query("UPDATE users SET status = 'inactif' WHERE id = :u", { replacements: { u: p.user.id } });
+      expect((await api().post(REFRESH).send({ refresh_token: p.refreshToken })).status).toBe(401);
+    });
+  });
+
   test('client navigateur : refresh lu dans le cookie, nouveau cookie posé', async () => {
     const p = await nouveauProprietaire();
     const connexion = await api().post('/api/v1/auth/connexion').set('Origin', 'http://localhost:5173')
@@ -243,7 +321,10 @@ describe('CORRECTIFS sessions (audit de sécurité)', () => {
 
   test('jeton REMPLACÉ PAR ROTATION rejoué plus tard : vol présumé, toutes les sessions fermées (inchangé)', async () => {
     const p = await nouveauProprietaire();
-    expect((await rafraichir(p.refreshToken)).status).toBe(200);
+    const successeur = await rafraichir(p.refreshToken);
+    expect(successeur.status).toBe(200);
+    // Le successeur a servi : le client l'a bien reçu, ce n'est pas une réponse perdue.
+    expect((await rafraichir(successeur.body.data.refresh_token)).status).toBe(200);
     await sequelize.query("UPDATE refresh_tokens SET revoked_at = now() - interval '5 minutes' WHERE user_id = :u AND revoked_reason = 'rotation'", { replacements: { u: p.user.id } });
     expect((await rafraichir(p.refreshToken)).status).toBe(401);
     expect(await sessionsActives(p.user.id)).toBe(0);

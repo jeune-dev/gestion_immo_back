@@ -10,7 +10,7 @@ const RefreshToken = sequelize.define('RefreshToken', {
   token_hash: { type: DataTypes.CHAR(64), allowNull: false },
   expires_at: { type: DataTypes.DATE, allowNull: false },
   revoked_at: { type: DataTypes.DATE },
-  // rotation | deconnexion | plafond | distante | globale | rejeu | expiration
+  // rotation | reprise | deconnexion | plafond | distante | globale | rejeu | expiration
   revoked_reason: { type: DataTypes.STRING(20) },
   // Début de la SESSION (transmis de rotation en rotation) : durée maximale absolue.
   session_started_at: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
@@ -19,6 +19,8 @@ const RefreshToken = sequelize.define('RefreshToken', {
   ip: { type: DataTypes.STRING(64) },
   user_agent: { type: DataTypes.STRING(300) },
   last_used_at: { type: DataTypes.DATE },
+  // Successeur émis par la rotation : permet de reconnaître une réponse perdue.
+  replaced_by_id: { type: DataTypes.UUID },
 }, {
   tableName: 'refresh_tokens',
   createdAt: 'created_at',

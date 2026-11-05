@@ -24,9 +24,17 @@ const logger = require('../../../utils/logger.js');
  *   conditionnelle, reprise de Widjila) ; et DÉTECTION DE REJEU : présenter un
  *   refresh token déjà consommé révoque toutes les sessions du compte (signe
  *   d'un vol de jeton).
+ * - REPRISE : si le successeur n'a jamais servi, le client n'a sans doute pas reçu
+ *   la réponse de rotation (coupure, application fermée). Il est remplacé pendant
+ *   quelques minutes ; passé ce délai, seule cette session est fermée. Le jeton
+ *   écarté reste surveillé : le représenter ensuite ferme toutes les sessions.
  */
 
 const DELAI_GRACE_ROTATION_MS = 30_000;
+/** En deçà, deux demandes du même jeton se croisent : pas de reprise, le client réessaiera. */
+const DELAI_COURSE_ROTATION_MS = 5_000;
+const delaiRepriseRotationMs = () => Number(process.env.SESSION_REPRISE_ROTATION_MIN || 10) * 60 * 1000;
+const refusPassager = () => ({ ok: false, motif: 'Session déjà renouvelée, réessayez', code: 'SESSION_DEJA_RENOUVELEE' });
 
 /**
  * Durée MAXIMALE ABSOLUE d'une session, rotations comprises (point faible de
@@ -106,6 +114,71 @@ async function ouvrirSession(user, meta = {}, transaction = null) {
   return { accessToken, refreshToken, expiresIn: jwtConfig.expiresIn };
 }
 
+/** Compte actif et durée maximale de la session non atteinte. */
+async function controlerSession(stocke) {
+  const user = await User.findByPk(stocke.user_id);
+  if (!user || user.status !== 'actif') return { refus: { ok: false, motif: 'Compte inactif' } };
+  const debutSession = new Date(stocke.session_started_at || stocke.created_at);
+  if (Date.now() - debutSession.getTime() > dureeMaxSessionMs(user)) {
+    await RefreshToken.update({ revoked_at: new Date(), revoked_reason: 'expiration' }, { where: { id: stocke.id, revoked_at: null } });
+    return { refus: { ok: false, motif: 'Session expirée (durée maximale atteinte), veuillez vous reconnecter' } };
+  }
+  return { user, debutSession };
+}
+
+/** Émet le jeton suivant de la session et le relie à celui qu'il remplace. */
+async function emettreSuccesseur(stocke, { user, debutSession }, meta, t) {
+  const nouveau = genererRefreshToken(user);
+  const accessToken = genererAccessToken(user, nouveau);
+  const successeur = await RefreshToken.create({
+    user_id: user.id,
+    token_hash: hashToken(nouveau),
+    expires_at: expirationDe(nouveau),
+    device_name: stocke.device_name,
+    platform: stocke.platform,
+    ip: meta.ip || stocke.ip,
+    user_agent: meta.userAgent ? String(meta.userAgent).slice(0, 300) : stocke.user_agent,
+    last_used_at: new Date(),
+    // La session garde sa date de début : la durée maximale est absolue.
+    session_started_at: debutSession,
+  }, { transaction: t });
+  await RefreshToken.update({ replaced_by_id: successeur.id }, { where: { id: stocke.id }, transaction: t });
+  return { ok: true, accessToken, refreshToken: nouveau, user, expiresIn: jwtConfig.expiresIn };
+}
+
+/**
+ * Jeton remplacé dont le successeur n'a jamais servi : réponse de rotation perdue.
+ * @returns le résultat à renvoyer, ou `null` si le successeur a déjà servi (rejeu).
+ */
+async function reprendreRotationPerdue(stocke, meta) {
+  const successeur = stocke.revoked_reason === 'rotation' && stocke.replaced_by_id
+    ? await RefreshToken.findByPk(stocke.replaced_by_id)
+    : null;
+  if (!successeur || ['rotation', 'reprise'].includes(successeur.revoked_reason)) return null;
+  // Session déjà fermée par ailleurs (déconnexion, mot de passe changé…) : rien à reprendre.
+  if (successeur.revoked_at) return { ok: false, motif: 'Session fermée, veuillez vous reconnecter' };
+
+  const age = Date.now() - new Date(stocke.revoked_at).getTime();
+  if (age < DELAI_COURSE_ROTATION_MS) return refusPassager();
+  if (age > delaiRepriseRotationMs()) {
+    await RefreshToken.update({ revoked_at: new Date(), revoked_reason: 'rejeu' }, { where: { id: successeur.id, revoked_at: null } });
+    logger.warn('[session] Jeton remplacé présenté trop tard : cette session seule est fermée', { utilisateurId: stocke.user_id });
+    return { ok: false, motif: 'Session expirée, veuillez vous reconnecter' };
+  }
+  if (stocke.expires_at < new Date()) return { ok: false, motif: 'Session expirée, veuillez vous reconnecter' };
+
+  const controle = await controlerSession(stocke);
+  if (controle.refus) return controle.refus;
+  return sequelize.transaction(async (t) => {
+    const [ecartes] = await RefreshToken.update(
+      { revoked_at: new Date(), revoked_reason: 'reprise' },
+      { where: { id: successeur.id, revoked_at: null }, transaction: t }
+    );
+    if (ecartes === 0) return refusPassager();
+    return emettreSuccesseur(stocke, controle, meta, t);
+  });
+}
+
 /**
  * Rafraîchit une session avec rotation.
  * @returns {Promise<{ ok: true, accessToken, refreshToken, user } | { ok: false, motif: string }>}
@@ -128,14 +201,16 @@ async function rafraichir(refreshToken, meta = {}) {
     // par une révocation globale : simplement refusé. Seule la réutilisation
     // d'un jeton REMPLACÉ PAR ROTATION trahit un vol (sinon, un vieux jeton
     // déconnecté suffisait à fermer toutes les sessions de la victime).
-    if (stocke.revoked_reason && stocke.revoked_reason !== 'rotation') {
+    if (stocke.revoked_reason && !['rotation', 'reprise'].includes(stocke.revoked_reason)) {
       return { ok: false, motif: 'Session fermée, veuillez vous reconnecter' };
     }
+    const reprise = await reprendreRotationPerdue(stocke, meta);
+    if (reprise) return reprise;
     // Deux rafraîchissements quasi simultanés du MÊME client (deux écrans qui
     // expirent ensemble) : le second arrive juste après la rotation. Ce n'est
     // pas un vol — on refuse sans fermer toutes les sessions.
     if (Date.now() - new Date(stocke.revoked_at).getTime() < DELAI_GRACE_ROTATION_MS) {
-      return { ok: false, motif: 'Session déjà renouvelée, réessayez' };
+      return refusPassager();
     }
     // REJEU tardif d'un jeton déjà consommé : jeton probablement volé. La
     // prudence l'emporte : toutes les sessions du compte sont fermées.
@@ -146,13 +221,8 @@ async function rafraichir(refreshToken, meta = {}) {
   }
   if (stocke.expires_at < new Date()) return { ok: false, motif: 'Session expirée, veuillez vous reconnecter' };
 
-  const user = await User.findByPk(stocke.user_id);
-  if (!user || user.status !== 'actif') return { ok: false, motif: 'Compte inactif' };
-  const debutSession = new Date(stocke.session_started_at || stocke.created_at);
-  if (Date.now() - debutSession.getTime() > dureeMaxSessionMs(user)) {
-    await RefreshToken.update({ revoked_at: new Date(), revoked_reason: 'expiration' }, { where: { id: stocke.id, revoked_at: null } });
-    return { ok: false, motif: 'Session expirée (durée maximale atteinte), veuillez vous reconnecter' };
-  }
+  const controle = await controlerSession(stocke);
+  if (controle.refus) return controle.refus;
 
   return sequelize.transaction(async (t) => {
     // Révocation CONDITIONNELLE : arbitre deux rafraîchissements simultanés.
@@ -160,23 +230,8 @@ async function rafraichir(refreshToken, meta = {}) {
       { revoked_at: new Date(), revoked_reason: 'rotation' },
       { where: { id: stocke.id, revoked_at: null }, transaction: t }
     );
-    if (revoques === 0) return { ok: false, motif: 'Session révoquée, veuillez vous reconnecter' };
-
-    const nouveau = genererRefreshToken(user);
-    const accessToken = genererAccessToken(user, nouveau);
-    await RefreshToken.create({
-      user_id: user.id,
-      token_hash: hashToken(nouveau),
-      expires_at: expirationDe(nouveau),
-      device_name: stocke.device_name,
-      platform: stocke.platform,
-      ip: meta.ip || stocke.ip,
-      user_agent: meta.userAgent ? String(meta.userAgent).slice(0, 300) : stocke.user_agent,
-      last_used_at: new Date(),
-      // La session garde sa date de début : la durée maximale est absolue.
-      session_started_at: debutSession,
-    }, { transaction: t });
-    return { ok: true, accessToken, refreshToken: nouveau, user, expiresIn: jwtConfig.expiresIn };
+    if (revoques === 0) return refusPassager();
+    return emettreSuccesseur(stocke, controle, meta, t);
   });
 }
 
