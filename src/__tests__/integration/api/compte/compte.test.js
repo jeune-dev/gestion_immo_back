@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, bearer, MOT_DE_PASSE, nouveauProprietaire, superAdmin, codeTotp, proprietaireEtLocataire, emailUnique, compter, fermer, sequelize,
+  api, bearer, MOT_DE_PASSE, nouveauProprietaire, superAdmin, codeTotp, proprietaireEtLocataire, emailUnique, compter, fermer, sequelize, pngTest,
 } = require('../../../setup/helpers.js');
 const email = require('../../../../infrastructure/email.service.js');
 
@@ -18,6 +18,63 @@ afterAll(fermer);
 
 const changerMdp = (h, actuel = MOT_DE_PASSE, nouveau = NOUVEAU) => api().post(`${COMPTE}/mot-de-passe`).set(h)
   .send({ current_password: actuel, password: nouveau, password_confirmation: nouveau });
+
+describe('Photo de profil', () => {
+  const PHOTO = `${COMPTE}/photo`;
+
+  test('sans photo : 404, et le profil l’indique', async () => {
+    const p = await nouveauProprietaire();
+    expect((await api().get(PHOTO).set(p.h)).body.error.code).toBe('PHOTO_INTROUVABLE');
+    expect((await api().get(COMPTE).set(p.h)).body.data.user.avatar_updated_at).toBeNull();
+  });
+
+  test('envoi, lecture, remplacement et suppression ; la clé de stockage ne sort jamais', async () => {
+    const p = await nouveauProprietaire();
+    const envoi = await api().post(PHOTO).set(p.h).attach('fichier', await pngTest(), 'photo.png');
+    expect(envoi.status).toBe(200);
+    expect(envoi.body.data.user.avatar_updated_at).toEqual(expect.any(String));
+    expect(envoi.body.data.user.avatar_key).toBeUndefined();
+
+    const profil = await api().get(COMPTE).set(p.h);
+    expect(profil.body.data.user.avatar_updated_at).toEqual(expect.any(String));
+    expect(profil.body.data.user.avatar_key).toBeUndefined();
+
+    const lecture = await api().get(PHOTO).set(p.h).buffer(true).parse((r, cb) => {
+      const morceaux = [];
+      r.on('data', (m) => morceaux.push(m));
+      r.on('end', () => cb(null, Buffer.concat(morceaux)));
+    });
+    expect(lecture.status).toBe(200);
+    expect(lecture.headers['content-type']).toMatch(/image\/webp/);
+    expect(lecture.headers['cache-control']).toMatch(/no-store/);
+    expect(lecture.body.length).toBeGreaterThan(0);
+
+    expect((await api().post(PHOTO).set(p.h).attach('fichier', await pngTest('#00f'), 'autre.png')).status).toBe(200);
+    expect((await api().get(PHOTO).set(p.h)).status).toBe(200);
+
+    const retrait = await api().delete(PHOTO).set(p.h);
+    expect(retrait.status).toBe(200);
+    expect(retrait.body.data.user.avatar_updated_at).toBeNull();
+    expect((await api().get(PHOTO).set(p.h)).status).toBe(404);
+  });
+
+  test('un fichier qui n’est pas une image est refusé', async () => {
+    const p = await nouveauProprietaire();
+    const res = await api().post(PHOTO).set(p.h).attach('fichier', Buffer.from('pas une image'), 'photo.png');
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+    expect((await api().get(COMPTE).set(p.h)).body.data.user.avatar_updated_at).toBeNull();
+  });
+
+  test('chacun ne lit que sa propre photo, et il faut être connecté', async () => {
+    const a = await nouveauProprietaire();
+    const b = await nouveauProprietaire();
+    await api().post(PHOTO).set(a.h).attach('fichier', await pngTest(), 'photo.png');
+    expect((await api().get(PHOTO).set(b.h)).status).toBe(404);
+    expect((await api().get(PHOTO)).status).toBe(401);
+    expect((await api().post(PHOTO).attach('fichier', await pngTest(), 'photo.png')).status).toBe(401);
+  });
+});
 
 describe('GET /compte', () => {
   test('propriétaire : utilisateur, espace et état de l’abonnement ; aucun secret', async () => {

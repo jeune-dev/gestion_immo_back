@@ -1,6 +1,8 @@
 'use strict';
 
+const { pipeline } = require('stream');
 const asyncHandler = require('../../../middlewares/asyncHandler.js');
+const logger = require('../../../utils/logger.js');
 const { ok } = require('../../../utils/response.js');
 const { cookieRefresh } = require('../../../config/security.js');
 const CompteService = require('../service/compte.service.js');
@@ -14,6 +16,30 @@ exports.profil = asyncHandler(async (req, res) => ok(res, await CompteService.pr
 exports.modifierProfil = asyncHandler(async (req, res) => {
   const user = await CompteService.modifierProfil(req.user, req.body);
   return ok(res, { user }, 'Profil mis à jour');
+});
+
+exports.photo = asyncHandler(async (req, res) => {
+  const objet = await CompteService.ouvrirPhoto(req.user);
+  res.status(200);
+  res.setHeader('Content-Type', 'image/webp');
+  if (Number.isFinite(objet.taille)) res.setHeader('Content-Length', String(objet.taille));
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  pipeline(objet.stream, res, (err) => {
+    if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+      logger.warn('[compte] Transfert de la photo interrompu', { utilisateurId: req.user.id, error: err.message });
+    }
+  });
+});
+
+exports.definirPhoto = asyncHandler(async (req, res) => {
+  const user = await CompteService.definirPhoto(req.user, req.fichier);
+  return ok(res, { user }, 'Photo de profil enregistrée');
+});
+
+exports.supprimerPhoto = asyncHandler(async (req, res) => {
+  const user = await CompteService.supprimerPhoto(req.user);
+  return ok(res, { user }, 'Photo de profil supprimée');
 });
 
 /** Nouvelle session pour l'appareil courant (cookie pour le web, corps pour le mobile). */

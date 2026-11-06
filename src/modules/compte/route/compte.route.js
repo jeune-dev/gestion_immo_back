@@ -4,11 +4,16 @@ const router = require('express').Router();
 const ctrl = require('../controller/compte.controller.js');
 const validate = require('../../../middlewares/validate.middleware.js');
 const { mutationRateLimit } = require('../../../middlewares/rateLimit.middleware.js');
+const { recevoirFichier } = require('../../../middlewares/upload.middleware.js');
 const v = require('../validation/compte.validation.js');
 
 // Monté après `auth` (routes.js) : tout compte authentifié et actif.
 router.get('/', ctrl.profil);
 router.patch('/', mutationRateLimit, validate(v.profilSchema), ctrl.modifierProfil);
+// Photo de profil : gardée par le serveur, servie uniquement à son titulaire.
+router.get('/photo', ctrl.photo);
+router.post('/photo', recevoirFichier('image'), ctrl.definirPhoto);
+router.delete('/photo', mutationRateLimit, ctrl.supprimerPhoto);
 router.post('/mot-de-passe', mutationRateLimit, validate(v.motDePasseSchema), ctrl.changerMotDePasse);
 router.get('/sessions', ctrl.sessions);
 router.delete('/sessions/:id', mutationRateLimit, validate(v.sessionIdSchema, 'params'), ctrl.revoquerSession);

@@ -10,6 +10,9 @@ const {
 const sessions = require('../../auth/service/session.service.js');
 const { journaliser, difference } = require('../../audit/service/audit.service.js');
 const droits = require('../../abonnement/service/droits.service.js');
+const storage = require('../../../infrastructure/storage.service.js');
+const { preparerImage } = require('../../../infrastructure/image.service.js');
+const logger = require('../../../utils/logger.js');
 
 async function profil(user, ownerId) {
   const complet = await User.findByPk(user.id);
@@ -134,4 +137,42 @@ async function supprimerAppareil(user, { token }) {
   await DeviceToken.destroy({ where: { token, user_id: user.id } });
 }
 
-module.exports = { profil, modifierProfil, changerMotDePasse, revoquerSession, revoquerToutes, enregistrerAppareil, supprimerAppareil };
+/** Retire l'ancien fichier : un échec laisse un fichier orphelin, jamais une erreur à l'utilisateur. */
+async function retirerFichierPhoto(cle) {
+  if (!cle) return;
+  try {
+    await storage.supprimer(cle);
+  } catch (err) {
+    logger.warn('[compte] Ancienne photo de profil non supprimée', { error: err.message });
+  }
+}
+
+/** Photo de profil du titulaire du compte : une version réduite suffit à l'affichage. */
+async function definirPhoto(user, fichier) {
+  const { miniature } = await preparerImage(fichier.buffer, fichier.type);
+  const cle = await storage.enregistrer(miniature, 'avatars', 'webp', 'image/webp');
+  const complet = await User.findByPk(user.id);
+  const ancienne = complet.avatar_key;
+  await complet.update({ avatar_key: cle, avatar_updated_at: new Date() });
+  await journaliser({ action: 'compte.photo_modifiee', entityType: 'user', entityId: complet.id });
+  await retirerFichierPhoto(ancienne);
+  return complet;
+}
+
+async function ouvrirPhoto(user) {
+  const complet = await User.findByPk(user.id, { attributes: ['id', 'avatar_key'] });
+  const objet = complet.avatar_key ? await storage.ouvrir(complet.avatar_key) : null;
+  if (!objet) throw new NotFoundError('Aucune photo de profil', 'PHOTO_INTROUVABLE');
+  return objet;
+}
+
+async function supprimerPhoto(user) {
+  const complet = await User.findByPk(user.id);
+  const ancienne = complet.avatar_key;
+  await complet.update({ avatar_key: null, avatar_updated_at: null });
+  await journaliser({ action: 'compte.photo_supprimee', entityType: 'user', entityId: complet.id });
+  await retirerFichierPhoto(ancienne);
+  return complet;
+}
+
+module.exports = { definirPhoto, ouvrirPhoto, supprimerPhoto, profil, modifierProfil, changerMotDePasse, revoquerSession, revoquerToutes, enregistrerAppareil, supprimerAppareil };

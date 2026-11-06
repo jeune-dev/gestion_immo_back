@@ -131,6 +131,7 @@ describe('Performance : aucune requête SQL par ligne (N+1)', () => {
     const [[plan]] = await sequelize.query("SELECT id FROM subscription_plans WHERE code = 'PRO'");
     const [[modele]] = await sequelize.query('SELECT id FROM lease_templates ORDER BY created_at LIMIT 1');
     const complement = async (jeu) => {
+      verifier(await api().post('/api/v1/compte/photo').set(jeu.proprio.h).attach('fichier', await pngTest('#0a0'), 'profil.png'), 200, 'photo de profil');
       const [[abo]] = await sequelize.query('SELECT id FROM subscriptions WHERE owner_id = :o LIMIT 1', { replacements: { o: jeu.proprio.ownerId } });
       const { proprio: p, ids } = jeu;
       // Facture commune pas encore répartie (aperçu de la répartition).

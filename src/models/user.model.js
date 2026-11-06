@@ -13,6 +13,9 @@ const User = sequelize.define('User', {
   email: { type: DataTypes.STRING(254) },
   phone: { type: DataTypes.STRING(20) },
   password_hash: { type: DataTypes.STRING(100), allowNull: false },
+  // Photo de profil : clé de stockage (jamais exposée) et date de dernière modification.
+  avatar_key: { type: DataTypes.STRING(300) },
+  avatar_updated_at: { type: DataTypes.DATE },
   status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'actif' },
   email_verified_at: { type: DataTypes.DATE },
   failed_login_attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
@@ -48,7 +51,7 @@ const User = sequelize.define('User', {
  */
 const COLONNES_SECRETES = [
   'password_hash', 'token_version', 'failed_login_attempts', 'locked_until', 'deleted_at',
-  'totp_secret', 'totp_last_step', 'mfa_recovery_codes',
+  'totp_secret', 'totp_last_step', 'mfa_recovery_codes', 'avatar_key',
 ];
 
 User.prototype.toJSON = function toJSON() {

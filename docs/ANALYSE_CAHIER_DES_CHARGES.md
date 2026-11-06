@@ -180,6 +180,11 @@ ajoutées : `owner_members` (évolutivité § 49), `refresh_tokens`, `password_r
 
 ## 8. Hors ligne et synchronisation (§ 34, § 35, § 44)
 
+> **Décision du 5 novembre 2026 : l'application mobile ne garde plus aucune donnée
+> sur le téléphone.** La consultation hors ligne et la file de créations différées
+> des § 34-35 sont retirées : sans réseau, l'application demande de réessayer. Seul
+> le jeton de session reste dans le coffre de l'appareil.
+
 - Paiement : jamais hors ligne (confirmation serveur obligatoire).
 - Création différée (dépenses, incidents, états des lieux, photos) : en-tête
   `Idempotency-Key` — un renvoi après coupure réseau rejoue la réponse d'origine au

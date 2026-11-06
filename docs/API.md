@@ -118,6 +118,9 @@ Variables d'exploitation : `RELANCES_TAILLE_LOT` (défaut 1000) — les relances
 | GET | `/api/v1/compte` |
 | PATCH | `/api/v1/compte` |
 | POST | `/api/v1/compte/mot-de-passe` |
+| GET | `/api/v1/compte/photo` |
+| POST | `/api/v1/compte/photo` |
+| DELETE | `/api/v1/compte/photo` |
 | GET | `/api/v1/compte/sessions` |
 | DELETE | `/api/v1/compte/sessions/:id` |
 | POST | `/api/v1/compte/sessions/revoquer-toutes` |
