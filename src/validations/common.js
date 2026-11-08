@@ -44,7 +44,6 @@ const dateIso = Joi.string().trim().pattern(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]
   .message('{{#label}} doit être une date au format AAAA-MM-JJ')
   .custom((v, aide) => (dateExiste(v) ? v : aide.message('{{#label}} n’est pas une date du calendrier')));
 
-const texteCourt = Joi.string().trim().max(255);
 const texteLong = Joi.string().trim().max(5000);
 
 const paramId = Joi.object({ id: uuid.required() });
@@ -67,5 +66,5 @@ const pagination = {
 
 module.exports = {
   Joi, uuid, telephone, email, motDePasse, nom, montant, montantPositif, dateIso,
-  texteCourt, texteLong, paramId, tri, recherche, pagination,
+  texteLong, paramId, tri, recherche, pagination,
 };

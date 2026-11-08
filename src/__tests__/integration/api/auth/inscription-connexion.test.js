@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, MOT_DE_PASSE, nouveauProprietaire, superAdmin, telephoneUnique, emailUnique, compter, fermer, sequelize,
+  api, MOT_DE_PASSE, nouveauProprietaire, telephoneUnique, emailUnique, compter, fermer, sequelize,
 } = require('../../../setup/helpers.js');
 const sessions = require('../../../../modules/auth/service/session.service.js');
 

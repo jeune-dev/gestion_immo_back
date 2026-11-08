@@ -9,7 +9,6 @@ const {
 const auth = require('../../../../middlewares/auth.middleware.js');
 const { requireLocataire } = require('../../../../middlewares/acces.middleware.js');
 const errorHandler = require('../../../../middlewares/errorHandler.middleware.js');
-const { historiquePourLocataire } = require('../../../../modules/messagerie/service/messagerie.service.js');
 
 /**
  * § 54.1 Messagerie intégrée : un fil par locataire visible des deux parties
@@ -262,28 +261,4 @@ describe('Messagerie (§ 54.1)', () => {
     expect((await api().post(`${BASE}/locataires/pas-un-uuid/messages`).set(A.h).send({ body: 'x' })).status).toBe(422);
   });
 
-  test('historique pour le dossier locataire (§ 54.1)', async () => {
-    // Conversation complète construite par l'API : 2 messages du propriétaire
-    // (préparation), une réponse, deux photos et deux messages rattachés.
-    const {
-      A, bailA, locA, filA,
-    } = await preparerFil();
-    const echeanceA = await echeanceDe(bailA.tenant.id);
-    const envois = [
-      () => loc().post(`${BASE_LOC}/${filA}/messages`).set(locA.h).send({ body: 'Entendu, je serai là.' }),
-      () => api().post(`${BASE}/locataires/${bailA.tenant.id}/photos`).set(A.h).field('body', 'Photo du compteur').attach('fichier', png, 'compteur.png'),
-      () => loc().post(`${BASE_LOC}/${filA}/photos`).set(locA.h).attach('fichier', png, 'fuite.png'),
-      () => api().post(`${BASE}/locataires/${bailA.tenant.id}/messages`).set(A.h).send({ body: 'Rappel de loyer', related_type: 'rent_schedule', related_id: echeanceA }),
-      () => loc().post(`${BASE_LOC}/${filA}/messages`).set(locA.h).send({ body: 'Mon loyer', related_type: 'rent_schedule', related_id: echeanceA }),
-    ];
-    // Envois successifs (dates de création croissantes, comme une vraie conversation).
-    for (const envoi of envois) expect((await envoi()).status).toBe(201);
-
-    const { rows, count } = await historiquePourLocataire(A.ownerId, bailA.tenant.id, { limit: 50, offset: 0 });
-    expect(count).toBeGreaterThanOrEqual(7);
-    expect(rows).toHaveLength(count);
-    expect(new Date(rows[0].created_at).getTime()).toBeGreaterThanOrEqual(new Date(rows[rows.length - 1].created_at).getTime());
-    const vide = await historiquePourLocataire(B.ownerId, bailA.tenant.id, { limit: 50, offset: 0 });
-    expect(vide).toEqual({ rows: [], count: 0 });
-  });
 });

@@ -19,7 +19,6 @@ const {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
-  HeadObjectCommand,
   HeadBucketCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
@@ -144,16 +143,6 @@ function contentType(nomFichier) {
 
 // ── Utilitaires ───────────────────────────────────────────────────────────────
 
-/** Convertit le flux renvoyé par R2 en Buffer. */
-function streamToBuffer(stream) {
-  return new Promise((resolve, reject) => {
-    const morceaux = [];
-    stream.on('data', (c) => morceaux.push(c));
-    stream.on('end', () => resolve(Buffer.concat(morceaux)));
-    stream.on('error', reject);
-  });
-}
-
 /**
  * Normalise une valeur stockée en base vers une clé R2.
  * Trois formes acceptées, pour supporter la migration sans toucher aux données :
@@ -201,19 +190,6 @@ async function upload(buffer, cle, nomOrigine = cle) {
 
 // ── Lecture ───────────────────────────────────────────────────────────────────
 
-/** Télécharge un objet et renvoie `{ buffer, contentType, taille }`. */
-async function download(valeur) {
-  const cle = versCle(valeur);
-  if (!cle) throw new Error('Clé R2 invalide');
-
-  const reponse = await requireClient().send(new GetObjectCommand({ Bucket: BUCKET, Key: cle }));
-  return {
-    buffer: await streamToBuffer(reponse.Body),
-    contentType: reponse.ContentType || contentType(cle),
-    taille: reponse.ContentLength,
-  };
-}
-
 /** Flux brut — évite de charger tout le fichier en mémoire (vidéos, gros PDF). */
 async function getStream(valeur) {
   const cle = versCle(valeur);
@@ -225,18 +201,6 @@ async function getStream(valeur) {
     contentType: reponse.ContentType || contentType(cle),
     taille: reponse.ContentLength,
   };
-}
-
-/** Vrai si l'objet existe dans le bucket. */
-async function existe(valeur) {
-  const cle = versCle(valeur);
-  if (!cle || !getClient()) return false;
-  try {
-    await client.send(new HeadObjectCommand({ Bucket: BUCKET, Key: cle }));
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -274,9 +238,7 @@ async function supprimer(valeur) {
 module.exports = {
   estConfigure,
   upload,
-  download,
   getStream,
-  existe,
   urlSignee,
   supprimer,
   versCle,

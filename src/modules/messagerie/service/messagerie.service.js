@@ -342,26 +342,8 @@ async function marquerLuLocataire(threadId, tenantIds) {
   return marquerLus(thread.id, 'locataire');
 }
 
-// ── Dossier locataire ─────────────────────────────────────────────────────
-
-/**
- * Historique des échanges d'un locataire, pour le journal de son dossier
- * (§ 54.1). Aucun contrôle d'accès ici : l'appelant (service du dossier
- * locataire) a déjà chargé la fiche avec chargerPourProprietaire.
- *
- * @param {string} ownerId
- * @param {string} tenantId
- * @param {{ limit: number, offset: number }} pagination
- * @returns {Promise<{ rows: object[], count: number }>}
- */
-async function historiquePourLocataire(ownerId, tenantId, pagination) {
-  const thread = await MessageThread.findOne({ where: { owner_id: ownerId, tenant_id: tenantId }, attributes: ['id'] });
-  if (!thread) return { rows: [], count: 0 };
-  return listerMessages(thread.id, pagination);
-}
-
 module.exports = {
   listerFils, messagesFil, envoyerProprietaire, marquerLuProprietaire,
   listerFilsLocataire, messagesFilLocataire, envoyerLocataire, marquerLuLocataire,
-  historiquePourLocataire, verifierRattachement,
+  verifierRattachement,
 };

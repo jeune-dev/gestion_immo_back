@@ -2,7 +2,7 @@
 
 const { Op } = require('sequelize');
 const {
-  Receipt, RentSchedule, Lease, Tenant, Apartment, Building, Owner, Document,
+  Receipt, RentSchedule, Tenant, Apartment, Building, Owner, Document,
 } = require('../../../models/index.js');
 const { prochainNumero, pad } = require('../../../utils/compteur.js');
 const { formatFcfa } = require('../../../utils/montants.js');

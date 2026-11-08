@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  api, nouveauProprietaire, superAdmin, bailActif, activerLocataire, proprietaireEtLocataire, pngTest,
+  api, nouveauProprietaire, superAdmin, bailActif, proprietaireEtLocataire, pngTest,
   fermer, sequelize, compter,
 } = require('../../../setup/helpers.js');
 const storage = require('../../../../infrastructure/storage.service.js');
