@@ -5,7 +5,8 @@ const sequelize = require('../../../config/db.js');
 const { Tenant, Lease, Apartment, Building, Owner, Deposit, TenantInvitation } = require('../../../models/index.js');
 const { chargerPourProprietaire } = require('../../../utils/acces.js');
 const { ordre, rechercheTexte } = require('../../../utils/liste.js');
-const { ConflictError } = require('../../../errors/AppError.js');
+const { ConflictError, ValidationError } = require('../../../errors/AppError.js');
+const { transactionAvecFichiers } = require('../../../database/transaction.js');
 const invitations = require('../../auth/service/invitation.service.js');
 const documents = require('../../document/service/document.service.js');
 const email = require('../../../infrastructure/email.service.js');
@@ -113,7 +114,7 @@ async function verifierTelephoneLibre(ownerId, phone, exclureId, transaction) {
 }
 
 async function creer(ownerId, user, donnees) {
-  const { send_invitation: inviter, whatsapp_consent: consentement, ...champs } = donnees;
+  const { send_invitation: inviter, ...champs } = donnees;
   const resultat = await sequelize.transaction(async (t) => {
     await verifierTelephoneLibre(ownerId, champs.phone, null, t);
     const tenant = await Tenant.create({
@@ -121,10 +122,10 @@ async function creer(ownerId, user, donnees) {
       email: champs.email || null,
       owner_id: ownerId,
       created_by: user.id,
-      whatsapp_consent: Boolean(consentement),
-      whatsapp_consent_at: consentement ? new Date() : null,
+      whatsapp_consent: false,
+      whatsapp_consent_at: null,
     }, { transaction: t });
-    await journaliser({ action: 'locataire.creation', entityType: 'tenant', entityId: tenant.id, ownerId, details: { nom: `${tenant.first_name} ${tenant.last_name}`, whatsapp_consent: Boolean(consentement) } }, t);
+    await journaliser({ action: 'locataire.creation', entityType: 'tenant', entityId: tenant.id, ownerId, details: { nom: `${tenant.first_name} ${tenant.last_name}` } }, t);
     const invitation = inviter ? await invitations.creer(tenant, user.id, t) : null;
     return { tenant, invitation };
   });
@@ -201,16 +202,17 @@ async function envoyerInvitation(ownerId, tenant, invitation) {
  *
  * Le consentement appartient au LOCATAIRE. Le propriétaire peut :
  *   - le RETIRER à tout moment (moins de messages, jamais un risque) ;
- *   - le DÉCLARER recueilli (à la création de la fiche ou plus tard, papier
- *     signé, accord oral) SEULEMENT si aucun retrait n'a jamais été
- *     enregistré (`whatsapp_consent_revoked_at` nul).
+ *   - le DÉCLARER recueilli EN JOIGNANT SA PREUVE (formulaire signé, capture
+ *     du message d'accord), rangée dans les documents de la fiche et visible
+ *     du locataire — SEULEMENT si aucun retrait n'a jamais été enregistré
+ *     (`whatsapp_consent_revoked_at` nul).
  * Après un retrait — par le locataire depuis son espace, ou par le
  * propriétaire —, seul le locataire peut le redonner
  * (POST /locataire/consentement-whatsapp) : un bailleur ne peut pas passer
  * outre un refus exprimé (« aucun message WhatsApp sans consentement »).
  */
-async function consentementWhatsapp(id, ownerId, accorde) {
-  return sequelize.transaction(async (t) => {
+async function consentementWhatsapp(id, ownerId, accorde, { user = null, fichier = null } = {}) {
+  return transactionAvecFichiers(async (t) => {
     const tenant = await chargerPourProprietaire(Tenant, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, 'Locataire');
     if (accorde && tenant.whatsapp_consent_revoked_at) {
       throw new ConflictError(
@@ -219,10 +221,20 @@ async function consentementWhatsapp(id, ownerId, accorde) {
       );
     }
     if (accorde && tenant.whatsapp_consent) return tenant;
+    let preuve = null;
+    if (accorde) {
+      if (!fichier) {
+        throw new ValidationError('Données invalides', ['Joignez la preuve de l’accord du locataire (formulaire signé ou capture de son message), champ « fichier ».'], 'PREUVE_CONSENTEMENT_REQUISE');
+      }
+      preuve = await documents.creerDocument({
+        ownerId, tenantId: id, entityType: 'tenant', entityId: id, category: 'justificatif',
+        fichier: { ...fichier, nomOrigine: fichier.nomOrigine || 'consentement-whatsapp' }, visibleToTenant: true, uploadedBy: user?.id || null,
+      }, t);
+    }
     await tenant.update(accorde
       ? { whatsapp_consent: true, whatsapp_consent_at: new Date(), whatsapp_consent_revoked_at: null }
       : { whatsapp_consent: false, whatsapp_consent_revoked_at: new Date() }, { transaction: t });
-    await journaliser({ action: 'locataire.consentement_whatsapp', entityType: 'tenant', entityId: id, ownerId, details: { accorde } }, t);
+    await journaliser({ action: 'locataire.consentement_whatsapp', entityType: 'tenant', entityId: id, ownerId, details: { accorde, ...(preuve ? { preuve: preuve.id } : {}) } }, t);
     return tenant;
   });
 }

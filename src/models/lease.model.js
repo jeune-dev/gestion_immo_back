@@ -29,6 +29,20 @@ const Lease = sequelize.define('Lease', {
   closed_at: { type: DataTypes.DATE },
   cancelled_at: { type: DataTypes.DATE },
   created_by: { type: DataTypes.UUID },
+  // Accord du locataire avant l'activation (application ou papier signé).
+  proposed_at: { type: DataTypes.DATE },
+  tenant_accepted_at: { type: DataTypes.DATE },
+  tenant_accepted_by: { type: DataTypes.UUID },
+  tenant_refused_at: { type: DataTypes.DATE },
+  refusal_reason: { type: DataTypes.TEXT },
+  acceptance_method: { type: DataTypes.STRING(12) },
+  acceptance_document_id: { type: DataTypes.UUID },
+  // Congé donné par l'une des parties.
+  notice_given_at: { type: DataTypes.DATE },
+  notice_given_by: { type: DataTypes.STRING(12) },
+  notice_reason: { type: DataTypes.TEXT },
+  planned_exit_date: { type: DataTypes.DATEONLY },
+  end_alerts_sent: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
 }, {
   tableName: 'leases',
   createdAt: 'created_at',

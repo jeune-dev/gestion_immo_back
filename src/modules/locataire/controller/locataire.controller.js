@@ -28,4 +28,4 @@ exports.inviter = asyncHandler(async (req, res) => {
 });
 
 exports.consentement = asyncHandler(async (req, res) =>
-  ok(res, { tenant: await S.consentementWhatsapp(req.params.id, req.ownerId, req.body.accorde) }, 'Consentement WhatsApp mis à jour'));
+  ok(res, { tenant: await S.consentementWhatsapp(req.params.id, req.ownerId, req.body.accorde, { user: req.user, fichier: req.fichier || null }) }, 'Consentement WhatsApp mis à jour'));

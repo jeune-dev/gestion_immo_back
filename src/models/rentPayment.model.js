@@ -21,6 +21,12 @@ const RentPayment = sequelize.define('RentPayment', {
   refund_reason: { type: DataTypes.TEXT },
   refunded_by: { type: DataTypes.UUID },
   recorded_by: { type: DataTypes.UUID, allowNull: false },
+  // Contestation d'un remboursement par le locataire.
+  dispute_status: { type: DataTypes.STRING(10) },
+  dispute_message: { type: DataTypes.TEXT },
+  disputed_at: { type: DataTypes.DATE },
+  dispute_response: { type: DataTypes.TEXT },
+  dispute_resolved_at: { type: DataTypes.DATE },
 }, {
   tableName: 'rent_payments',
   createdAt: 'created_at',

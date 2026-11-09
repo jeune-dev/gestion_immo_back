@@ -241,6 +241,56 @@ async function deposerPreuve(user, tenantIds, donnees, fichier) {
   });
 }
 
+/**
+ * Espèces remises en main propre : le locataire DÉCLARE la remise (montant,
+ * date). Comme une preuve de paiement direct, rien n'est payé avant la
+ * validation du propriétaire, qui en reçoit la demande et un rappel après
+ * 48 heures. Le locataire garde une trace de ce qu'il a annoncé.
+ */
+async function declarerEspeces(user, tenantIds, donnees) {
+  return sequelize.transaction(async (t) => {
+    const { cible, lease } = await chargerCible(tenantIds, donnees, t);
+    const dejaDeclare = await PaymentTransaction.count({
+      where: {
+        wallet: 'especes', status: 'en_attente',
+        ...(donnees.rent_schedule_id ? { rent_schedule_id: donnees.rent_schedule_id } : { charge_id: donnees.charge_id }),
+      },
+      transaction: t,
+    });
+    if (dejaDeclare) {
+      throw new ConflictError('Une remise d’espèces est déjà en attente de validation pour cette échéance.', 'DECLARATION_EN_ATTENTE');
+    }
+    const tx = await PaymentTransaction.create({
+      owner_id: lease.owner_id,
+      tenant_id: cible.tenant_id,
+      lease_id: lease.id,
+      rent_schedule_id: donnees.rent_schedule_id || null,
+      charge_id: donnees.charge_id || null,
+      payment_provider_id: null,
+      provider: 'especes',
+      wallet: 'especes',
+      mode: 'preuve',
+      reference: nouvelleReference(),
+      amount: donnees.amount,
+      status: 'en_attente',
+      declared_paid_on: donnees.paid_on,
+      rejection_reason: null,
+      initiated_by: user.id,
+    }, { transaction: t });
+    await journaliser({ action: 'paiement.declaration_especes', entityType: 'payment_transaction', entityId: tx.id, ownerId: lease.owner_id, details: { reference: tx.reference, montant: tx.amount, date: donnees.paid_on } }, t);
+    const tenant = await Tenant.findByPk(cible.tenant_id, { transaction: t });
+    await notifier(t, {
+      destinataires: await destinatairesProprietaire(lease.owner_id, t),
+      ownerId: lease.owner_id,
+      type: 'nouveau_paiement',
+      titre: 'Espèces à confirmer',
+      corps: `${tenant.first_name} ${tenant.last_name} déclare vous avoir remis ${formatFcfa(tx.amount)} en espèces le ${donnees.paid_on.split('-').reverse().join('/')}. Confirmez si vous les avez reçus.`,
+      donnees: { payment_transaction_id: tx.id },
+    });
+    return tx;
+  });
+}
+
 async function transactions(tenantIds, { limit, offset }) {
   return PaymentTransaction.findAndCountAll({
     where: { tenant_id: { [Op.in]: tenantIds } },
@@ -262,7 +312,7 @@ async function transaction(tenantIds, id) {
 async function paiements(tenantIds, { limit, offset }) {
   return RentPayment.findAndCountAll({
     where: { tenant_id: { [Op.in]: tenantIds } },
-    attributes: ['id', 'reference', 'amount', 'method', 'paid_on', 'status', 'refunded_at'],
+    attributes: ['id', 'reference', 'amount', 'method', 'paid_on', 'status', 'refunded_at', 'refund_reason', 'dispute_status', 'dispute_message', 'dispute_response'],
     order: [['paid_on', 'DESC'], ['created_at', 'DESC'], ['id', 'ASC']],
     limit,
     offset,
@@ -278,4 +328,4 @@ async function expirerDemandes(maintenant = new Date()) {
   return n;
 }
 
-module.exports = { moyensDisponibles, initier, deposerPreuve, transactions, transaction, paiements, expirerDemandes };
+module.exports = { moyensDisponibles, initier, deposerPreuve, declarerEspeces, transactions, transaction, paiements, expirerDemandes };

@@ -18,8 +18,10 @@ const creationSchema = Joi.object({
   first_name: nom.required(),
   last_name: nom.required(),
   phone: telephone.required(),
-  // § 54.3 : consentement recueilli par le propriétaire (le locataire peut le retirer à tout moment).
-  whatsapp_consent: Joi.boolean().default(false),
+  // § 54.3 : le consentement appartient au locataire. Il le donne dans son espace,
+  // ou le propriétaire le déclare AVEC une preuve (POST /:id/consentement-whatsapp).
+  // L'ancien champ est accepté pour les applications non mises à jour, puis ignoré.
+  whatsapp_consent: Joi.any().strip(),
   // Option A (§ 5) : envoyer l'invitation dès la création.
   send_invitation: Joi.boolean().default(false),
 });

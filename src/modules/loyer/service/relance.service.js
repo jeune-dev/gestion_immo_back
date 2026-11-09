@@ -66,6 +66,11 @@ function lotDeCandidates(jour, apres, taille) {
        AND rs.due_date BETWEEN CAST(:jour AS date) - 90 AND CAST(:jour AS date) + 30
        AND COALESCE(o.settings->'reminder_offsets', CAST(:defauts AS jsonb)) @> to_jsonb(CAST(:jour AS date) - rs.due_date)
        AND NOT EXISTS (SELECT 1 FROM rent_reminders r WHERE r.rent_schedule_id = rs.id AND r.offset_days = CAST(:jour AS date) - rs.due_date)
+       -- Le locataire a déclaré un paiement (preuve ou espèces) que le bailleur n'a pas
+       -- encore traité : pas de relance pendant 7 jours, le temps de la validation.
+       AND NOT EXISTS (SELECT 1 FROM payment_transactions pt
+                        WHERE pt.rent_schedule_id = rs.id AND pt.mode = 'preuve' AND pt.status = 'en_attente'
+                          AND pt.created_at > CAST(:jour AS date) - 7)
        AND (CAST(:apres AS uuid) IS NULL OR rs.id > CAST(:apres AS uuid))
      ORDER BY rs.id
      LIMIT :taille`,

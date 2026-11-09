@@ -50,14 +50,24 @@ const annulationSchema = Joi.object({
   reason: Joi.string().trim().min(3).max(500).required(),
 });
 
+/** Avenant de loyer proposé au locataire. */
 const loyerSchema = Joi.object({
   rent_amount: montantPositif,
   charges_amount: montant,
   effective_from: dateIso.required(),
+  reason: Joi.string().trim().max(1000).allow('', null),
 }).or('rent_amount', 'charges_amount');
+
+/** Congé donné par le propriétaire : le motif est obligatoire. */
+const congeSchema = Joi.object({
+  planned_exit_date: dateIso.required(),
+  reason: Joi.string().trim().min(3).max(1000).required(),
+});
+
+const paramAvenant = Joi.object({ id: uuid.required(), amendmentId: uuid.required() });
 
 const contratSchema = Joi.object({
   special_clauses: Joi.string().trim().max(10000).allow('', null),
 });
 
-module.exports = { creationSchema, modificationSchema, listeSchema, terminaisonSchema, annulationSchema, loyerSchema, contratSchema };
+module.exports = { creationSchema, modificationSchema, listeSchema, terminaisonSchema, annulationSchema, loyerSchema, congeSchema, paramAvenant, contratSchema };

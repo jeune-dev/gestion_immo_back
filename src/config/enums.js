@@ -88,6 +88,26 @@ const STATUT_BAIL = def([
   ['annule', 'Annulé'],
 ]);
 
+/** Avenant de loyer proposé au locataire. */
+const STATUT_AVENANT = def([
+  ['propose', 'En attente du locataire'],
+  ['accepte', 'Accepté'],
+  ['refuse', 'Refusé'],
+  ['annule', 'Annulé'],
+]);
+
+/** Comment le locataire a donné son accord (bail, avenant). */
+const MODE_ACCORD = def([
+  ['application', 'Dans l’application'],
+  ['papier', 'Document signé'],
+]);
+
+/** Partie qui donne congé. */
+const AUTEUR_CONGE = def([
+  ['proprietaire', 'Propriétaire'],
+  ['locataire', 'Locataire'],
+]);
+
 const STATUT_ECHEANCE = def([
   ['a_venir', 'À venir'],
   ['a_payer', 'À payer'],
@@ -152,6 +172,25 @@ const FOURNISSEUR_PAIEMENT = def([
 const PORTEFEUILLE = def([
   ['wave', 'Wave'],
   ['orange_money', 'Orange Money'],
+]);
+
+/**
+ * Valeurs possibles d'une transaction : les portefeuilles, plus les espèces
+ * que le locataire DÉCLARE avoir remises (à confirmer par le bailleur). Les
+ * espèces ne sont pas un moyen de paiement en ligne : elles restent hors de
+ * PORTEFEUILLE, qui liste les choix proposés au paiement.
+ */
+const PORTEFEUILLE_TRANSACTION = def([
+  ['wave', 'Wave'],
+  ['orange_money', 'Orange Money'],
+  ['especes', 'Espèces'],
+]);
+
+const FOURNISSEUR_TRANSACTION = def([
+  ['paydunya', 'PayDunya (Wave, Orange Money)'],
+  ['wave', 'Wave'],
+  ['orange_money', 'Orange Money'],
+  ['especes', 'Espèces (déclaration du locataire)'],
 ]);
 
 const MODE_TRANSACTION = def([
@@ -381,6 +420,7 @@ const TYPE_NOTIFICATION = def([
   ['nouveau_message', 'Nouveau message'],
   ['caution', 'Caution'],
   ['etat_des_lieux', 'État des lieux'],
+  ['bail', 'Bail'],
   ['rapprochement', 'Paiement à rapprocher'],
   ['abonnement', 'Abonnement'],
   ['systeme', 'Information'],
@@ -482,9 +522,9 @@ const codes = (enumeration) => Object.keys(enumeration);
 module.exports = {
   ROLES, STATUT_UTILISATEUR, STATUT_PROPRIETAIRE,
   STATUT_APPARTEMENT, TYPE_APPARTEMENT, TYPE_PIECE_IDENTITE,
-  TYPE_BAIL, PERIODICITE, MOIS_PAR_PERIODICITE, STATUT_BAIL, STATUT_ECHEANCE,
+  TYPE_BAIL, PERIODICITE, MOIS_PAR_PERIODICITE, STATUT_BAIL, STATUT_AVENANT, MODE_ACCORD, AUTEUR_CONGE, STATUT_ECHEANCE,
   TYPE_CHARGE, METHODE_REPARTITION, STATUT_FACTURE_COMMUNE, STATUT_CHARGE,
-  MODE_PAIEMENT, FOURNISSEUR_PAIEMENT, PORTEFEUILLE, MODE_TRANSACTION, STATUT_TRANSACTION, STATUT_PAIEMENT,
+  MODE_PAIEMENT, FOURNISSEUR_PAIEMENT, PORTEFEUILLE, PORTEFEUILLE_TRANSACTION, FOURNISSEUR_TRANSACTION, MODE_TRANSACTION, STATUT_TRANSACTION, STATUT_PAIEMENT,
   TYPE_RAPPROCHEMENT, STATUT_RAPPROCHEMENT,
   GROUPE_CAISSE_SORTIE, CATEGORIE_CAISSE, SENS_CAISSE, STATUT_DEPENSE,
   METIER_ARTISAN, CATEGORIE_TRAVAUX, PRIORITE, STATUT_TRAVAUX, PHASE_PHOTO,

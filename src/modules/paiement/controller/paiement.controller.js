@@ -4,6 +4,7 @@ const asyncHandler = require('../../../middlewares/asyncHandler.js');
 const { ok, created, paginated } = require('../../../utils/response.js');
 const S = require('../service/paiement.service.js');
 const R = require('../service/rapprochement.service.js');
+const Recu = require('../service/recuPaiement.service.js');
 
 exports.lister = asyncHandler(async (req, res) => paginated(res, await S.lister(req.ownerId, req.query, req.pagination), req.pagination));
 exports.detail = asyncHandler(async (req, res) => ok(res, { payment: await S.detail(req.params.id, req.ownerId) }));
@@ -22,3 +23,16 @@ exports.rejeterRapprochement = asyncHandler(async (req, res) => ok(res, { entry:
 
 exports.moyens = asyncHandler(async (req, res) => ok(res, { providers: await S.moyens(req.ownerId) }));
 exports.configurerMoyen = asyncHandler(async (req, res) => ok(res, { provider: await S.configurerMoyen(req.ownerId, req.body) }, 'Moyen de paiement enregistré'));
+
+/** PDF produit à la demande, jamais mis en cache (document privé). */
+function envoyerPdf(res, { buffer, nom }) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Length', String(buffer.length));
+  res.setHeader('Content-Disposition', `inline; filename="${nom.replace(/[^A-Za-z0-9_.-]/g, '_')}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.end(buffer);
+}
+exports.envoyerPdf = envoyerPdf;
+
+exports.recu = asyncHandler(async (req, res) => envoyerPdf(res, await Recu.recuProprietaire(req.params.id, req.ownerId)));
+exports.repondreContestation = asyncHandler(async (req, res) => ok(res, { payment: await Recu.repondre(req.ownerId, req.params.id, req.body) }, 'Réponse envoyée au locataire'));

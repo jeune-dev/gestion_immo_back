@@ -18,4 +18,17 @@ const consentementSchema = Joi.object({
   tenant_id: uuid,
 });
 
-module.exports = { echeancesSchema, consentementSchema, paginationSchema: Joi.object(pagination) };
+/** Refus d'un bail ou d'un avenant : le motif est transmis au bailleur. */
+const refusSchema = Joi.object({ reason: Joi.string().trim().min(3).max(1000).required() });
+
+const congeSchema = Joi.object({
+  planned_exit_date: dateIso.required(),
+  reason: Joi.string().trim().max(1000).allow('', null),
+});
+
+/** Contestation d'un remboursement. */
+const contestationSchema = Joi.object({ message: Joi.string().trim().min(5).max(2000).required() });
+
+module.exports = {
+  echeancesSchema, consentementSchema, refusSchema, congeSchema, contestationSchema, paginationSchema: Joi.object(pagination),
+};

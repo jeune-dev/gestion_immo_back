@@ -27,7 +27,7 @@ const INCLUDE_LOGEMENT = [
   { model: Owner, as: 'owner', attributes: ['id', 'display_name', 'company_name', 'phone'] },
 ];
 
-const ATTRIBUTS_BAIL = ['id', 'reference', 'status', 'lease_type', 'start_date', 'end_date', 'ended_on', 'rent_amount', 'charges_amount', 'deposit_amount', 'periodicity', 'due_day', 'tenant_id'];
+const ATTRIBUTS_BAIL = ['id', 'reference', 'status', 'lease_type', 'start_date', 'end_date', 'ended_on', 'rent_amount', 'charges_amount', 'deposit_amount', 'periodicity', 'due_day', 'tenant_id', 'notice_period_months', 'planned_exit_date', 'notice_given_by'];
 
 /** « Mon logement » : baux actifs d'abord, puis l'historique. */
 async function logements(tenantIds) {

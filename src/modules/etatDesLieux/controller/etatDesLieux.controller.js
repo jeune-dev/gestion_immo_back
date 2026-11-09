@@ -64,3 +64,4 @@ exports.detailLocataire = asyncHandler(async (req, res) => ok(res, { inspection:
 exports.pdfLocataire = asyncHandler(async (req, res) => envoyerPdf(res, await S.pdfLocataire(req.params.id, req.tenantIds)));
 exports.accepter = asyncHandler(async (req, res) => ok(res, { inspection: await S.accepter(req.params.id, req.tenantIds, req.user) }, 'État des lieux accepté'));
 exports.contester = asyncHandler(async (req, res) => ok(res, { inspection: await S.contester(req.params.id, req.tenantIds, req.user, req.body.comment) }, 'Contestation transmise au propriétaire'));
+exports.acceptationPapier = asyncHandler(async (req, res) => ok(res, { inspection: await S.acceptationPapier(req.params.id, req.ownerId, req.user, req.fichier) }, 'État des lieux signé enregistré'));

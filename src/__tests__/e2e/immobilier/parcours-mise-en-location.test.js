@@ -68,11 +68,17 @@ describe('E2E — mise en location complète', () => {
     expect(activation.status).toBe(201);
     const hl = bearer(activation.body.data.access_token);
 
-    // 5. Bail en brouillon ; activation refusée sans état des lieux d'entrée (§ 52.4).
+    // 5. Bail en brouillon : activation refusée sans l'accord du locataire, puis
+    //    sans état des lieux d'entrée (§ 52.4).
     const bail = (await api().post('/api/v1/baux').set(h).send({
       apartment_id: appartements[0].id, tenant_id: locataire.tenant.id, start_date: r.debut, deposit_amount: 700000, due_day: r.jourEcheance,
     })).body.data.lease;
     expect(bail).toMatchObject({ status: 'brouillon', rent_amount: 350000, reference: expect.stringMatching(/^BAIL-\d{4}-\d{4}$/) });
+    expect((await api().post(`/api/v1/baux/${bail.id}/activer`).set(h)).body.error.code).toBe('ACCORD_LOCATAIRE_REQUIS');
+    expect((await api().post(`/api/v1/baux/${bail.id}/proposer`).set(h)).status).toBe(200);
+    const aAccepter = (await api().get('/api/v1/locataire/accords').set(hl)).body.data.leases;
+    expect(aAccepter.map((l) => l.id)).toEqual([bail.id]);
+    expect((await api().post(`/api/v1/locataire/baux/${bail.id}/accepter`).set(hl)).status).toBe(200);
     expect((await api().post(`/api/v1/baux/${bail.id}/activer`).set(h)).body.error.code).toBe('ETAT_DES_LIEUX_ENTREE_REQUIS');
 
     // 6. État des lieux d'entrée : trame selon le type, saisie groupée, photo, soumission.

@@ -107,7 +107,7 @@ describe('Paiements — espace locataire', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.pagination).toEqual({ page: 1, limit: 2, total: 3, totalPages: 2 });
       expect(res.body.data.items.map((i) => i.amount)).toEqual([3000, 2000]);
-      expect(Object.keys(res.body.data.items[0]).sort()).toEqual(['amount', 'id', 'method', 'paid_on', 'reference', 'refunded_at', 'status']);
+      expect(Object.keys(res.body.data.items[0]).sort()).toEqual(['amount', 'dispute_message', 'dispute_response', 'dispute_status', 'id', 'method', 'paid_on', 'reference', 'refund_reason', 'refunded_at', 'status']);
       const p2 = await api().get('/api/v1/locataire/paiements?limit=2&page=2').set(locataire.h);
       expect(p2.body.data.items.map((i) => i.amount)).toEqual([1000]);
       expect((await api().get('/api/v1/locataire/paiements?page=5').set(locataire.h)).body.data.items).toEqual([]);

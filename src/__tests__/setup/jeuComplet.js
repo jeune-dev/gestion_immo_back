@@ -9,6 +9,7 @@
 const {
   api, nouveauProprietaire, bailActif, activerLocataire, echeancesDu, payerEspeces, pngTest, sequelize,
 } = require('./helpers.js');
+const { aujourdhui, ajouterJours } = require('../../utils/dates.js');
 
 const verifier = (res, attendu, etape) => {
   if (res.status !== attendu) throw new Error(`${etape} : ${res.status} ${JSON.stringify(res.body).slice(0, 400)}`);
@@ -30,6 +31,9 @@ async function jeuComplet({ proprio } = {}) {
   const loc = await activerLocataire(p, bail.tenant);
   const [echeance, echeance2] = await echeancesDu(p, bail.lease.id);
   const paiement = await payerEspeces(p, bail.lease.id, echeance.amount_due, { scheduleId: echeance.id });
+  // Nouveau loyer proposé (avenant en attente du locataire).
+  const avenant = verifier(await api().post(`/api/v1/baux/${bail.lease.id}/loyer`).set(p.h)
+    .send({ rent_amount: 999000, effective_from: ajouterJours(aujourdhui(), 60) }), 201, 'avenant');
 
   // Caution d'un second bail, terminé : versement, justificatif, retenue.
   const bail2 = await bailActif(p);
@@ -102,6 +106,7 @@ async function jeuComplet({ proprio } = {}) {
       apartment: bail.apartment.id,
       tenant: bail.tenant.id,
       lease: bail.lease.id,
+      amendment: avenant.amendment.id,
       schedule: echeance.id,
       payment: paiement.payment.id,
       receipt: recu.id,
@@ -181,6 +186,10 @@ function resoudreParametres(chemin, ids) {
       'locataire/messagerie/:threadId': ids.thread,
       'locataire/quittances/:id': ids.receipt,
       'paiements/transactions/:id#locataire': ids.transaction,
+      ':id/avenants/:amendmentId': ids.amendment,
+      'locataire/baux/:id': ids.lease,
+      'locataire/avenants/:id': ids.amendment,
+      'locataire/paiements/:id': ids.payment,
     };
     const valeur = table[cle] ?? (cle === 'paiements/transactions/:id' ? ids.transaction : undefined);
     if (!valeur) return null;

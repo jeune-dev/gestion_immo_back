@@ -31,6 +31,15 @@ const id = validate(paramId, 'params');
 router.get('/accueil', logement, ctrl.accueil);
 router.get('/logement', logement, ctrl.logement);
 
+// Ce qui attend la réponse du locataire : bail proposé, nouveau loyer, congé.
+router.get('/accords', logement, ctrl.accords);
+router.post('/baux/:id/accepter', logement, id, ctrl.accepterBail);
+router.post('/baux/:id/refuser', logement, id, validate(v.refusSchema), ctrl.refuserBail);
+router.post('/baux/:id/conge', logement, id, validate(v.congeSchema), ctrl.conge);
+router.post('/baux/:id/conge/annuler', logement, id, ctrl.annulerConge);
+router.post('/avenants/:id/accepter', logement, id, ctrl.accepterAvenant);
+router.post('/avenants/:id/refuser', logement, id, validate(v.refusSchema), ctrl.refuserAvenant);
+
 // Mon loyer.
 router.get('/echeances', logement, validate(v.echeancesSchema, 'query'), paginate(), ctrl.echeances);
 router.get('/echeances/:id', logement, id, ctrl.echeance);
@@ -42,6 +51,9 @@ router.get('/paiements', logement, validate(v.paginationSchema, 'query'), pagina
 router.get('/paiements/transactions', payer, validate(v.paginationSchema, 'query'), paginate(), ctrl.transactions);
 router.get('/paiements/transactions/:id', payer, id, ctrl.transaction);
 router.post('/paiements', payer, paiementRateLimit, idempotence({ obligatoire: true }), validate(vp.initiationSchema), ctrl.initier);
+router.post('/paiements/especes', payer, paiementRateLimit, idempotence(), validate(vp.especesLocataireSchema), ctrl.especes);
+router.get('/paiements/:id/recu', logement, id, ctrl.recu);
+router.post('/paiements/:id/contester', logement, id, validate(v.contestationSchema), ctrl.contesterRemboursement);
 router.post('/paiements/preuves', payer, paiementRateLimit, recevoirFichier('justificatif', { obligatoire: false }), validate(vp.preuveSchema), idempotence(), ctrl.preuve);
 
 // Mes quittances (§ 13).

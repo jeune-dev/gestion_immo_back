@@ -3,7 +3,7 @@
 const sharp = require('sharp');
 const {
   api, nouveauProprietaire, creerImmeuble, creerAppartement, creerLocataire, bailActif, activerLocataire,
-  desactiverEdlObligatoire, fermer, sequelize,
+  desactiverEdlObligatoire, fermer, sequelize, pngTest,
 } = require('../../../setup/helpers.js');
 
 /**
@@ -91,10 +91,13 @@ describe('Patrimoine, baux et cautions', () => {
     expect(n).toBe(0);
   });
 
-  test('modification du loyer d’un bail actif : échéances futures non payées recalculées, audit « modification_loyer »', async () => {
+  test('nouveau loyer accepté (avenant signé) : échéances futures non payées recalculées, audit « modification_loyer »', async () => {
     const p = await nouveauProprietaire();
     const { lease } = await bailActif(p);
-    const res = await api().post(`/api/v1/baux/${lease.id}/loyer`).set(p.h).send({ rent_amount: 400000, effective_from: '2027-01-01' });
+    const proposition = await api().post(`/api/v1/baux/${lease.id}/loyer`).set(p.h).send({ rent_amount: 400000, effective_from: '2027-01-01' });
+    expect(proposition.status).toBe(201);
+    const res = await api().post(`/api/v1/baux/${lease.id}/avenants/${proposition.body.data.amendment.id}/acceptation-papier`).set(p.h)
+      .attach('fichier', await pngTest(), 'avenant.png');
     expect(res.status).toBe(200);
     const [[jan]] = await sequelize.query("SELECT amount_due FROM rent_schedules WHERE lease_id = :l AND period_start = '2027-01-01'", { replacements: { l: lease.id } });
     const [[dec]] = await sequelize.query("SELECT amount_due FROM rent_schedules WHERE lease_id = :l AND period_start = '2026-12-01'", { replacements: { l: lease.id } });

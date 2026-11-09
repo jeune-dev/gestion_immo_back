@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   api, nouveauProprietaire, superAdmin, creerImmeuble, creerAppartement, creerLocataire, desactiverEdlObligatoire,
-  bailActif, activerLocataire, fermer, sequelize, compter,
+  bailActif, activerLocataire, fermer, sequelize, compter, pngTest,
 } = require('../../../setup/helpers.js');
 const { LeaseDocument } = require('../../../../models/index.js');
 const storage = require('../../../../infrastructure/storage.service.js');
@@ -236,7 +236,7 @@ describe('Baux (§ 10) et contrats (§ 53)', () => {
 
     test('politique « avertissement » : activation avec avertissement ETAT_DES_LIEUX_ENTREE_ABSENT', async () => {
       const p = await nouveauProprietaire();
-      await api().patch('/api/v1/parametres').set(p.h).send({ entry_inspection_policy: 'avertissement' });
+      await api().patch('/api/v1/parametres').set(p.h).send({ entry_inspection_policy: 'avertissement', lease_acceptance_policy: 'desactive' });
       const { lease } = await brouillon(p);
       const res = await api().post(`${BASE}/${lease.id}/activer`).set(p.h).send({});
       expect(res.status).toBe(200);
@@ -351,9 +351,12 @@ describe('Baux (§ 10) et contrats (§ 53)', () => {
         ['post', `${BASE}/${lease.id}/loyer`, { rent_amount: 1000, effective_from: '2020-01-01' }, 422],
       ], A.h);
       expect(ecarts).toEqual([]);
-      const res = await api().post(`${BASE}/${lease.id}/loyer`).set(A.h).send({ charges_amount: 20000, effective_from: '2027-02-01' });
+      const proposition = await api().post(`${BASE}/${lease.id}/loyer`).set(A.h).send({ charges_amount: 20000, effective_from: '2027-02-01' });
+      expect(proposition.status).toBe(201);
+      const res = await api().post(`${BASE}/${lease.id}/avenants/${proposition.body.data.amendment.id}/acceptation-papier`).set(A.h)
+        .attach('fichier', await pngTest(), 'avenant.png');
       expect(res.status).toBe(200);
-      expect(res.body.data.lease.charges_amount).toBe(20000);
+      expect((await api().get(`${BASE}/${lease.id}`).set(A.h)).body.data.lease.charges_amount).toBe(20000);
       expect(res.body.data.echeances_recalculees).toBeGreaterThan(0);
       const [[fev]] = await sequelize.query("SELECT amount_due FROM rent_schedules WHERE lease_id = :l AND period_start = '2027-02-01'", { replacements: { l: lease.id } });
       expect(fev.amount_due).toBe(370000);

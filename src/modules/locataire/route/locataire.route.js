@@ -5,6 +5,7 @@ const ctrl = require('../controller/locataire.controller.js');
 const validate = require('../../../middlewares/validate.middleware.js');
 const paginate = require('../../../middlewares/pagination.middleware.js');
 const idempotence = require('../../../middlewares/idempotence.middleware.js');
+const { recevoirFichier } = require('../../../middlewares/upload.middleware.js');
 const { requirePermission } = require('../../../middlewares/acces.middleware.js');
 const { P } = require('../../../config/permissions.js');
 const { Joi, paramId } = require('../../../validations/common.js');
@@ -20,6 +21,6 @@ router.get('/:id', lire, id, ctrl.fiche);
 router.patch('/:id', ecrire, id, validate(v.modificationSchema), ctrl.modifier);
 router.delete('/:id', ecrire, id, ctrl.supprimer);
 router.post('/:id/invitation', ecrire, id, ctrl.inviter);
-router.post('/:id/consentement-whatsapp', ecrire, id, validate(Joi.object({ accorde: Joi.boolean().required() })), ctrl.consentement);
+router.post('/:id/consentement-whatsapp', ecrire, id, recevoirFichier('justificatif', { obligatoire: false }), validate(Joi.object({ accorde: Joi.boolean().required() })), ctrl.consentement);
 
 module.exports = router;

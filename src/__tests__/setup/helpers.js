@@ -210,7 +210,7 @@ async function creerLocataire(proprio, surcharges = {}) {
 
 /** Désactive l'exigence d'état des lieux d'entrée (tests qui n'en ont pas besoin). */
 async function desactiverEdlObligatoire(proprio) {
-  const res = await api().patch('/api/v1/parametres').set(proprio.h).send({ entry_inspection_policy: 'desactive' });
+  const res = await api().patch('/api/v1/parametres').set(proprio.h).send({ entry_inspection_policy: 'desactive', lease_acceptance_policy: 'desactive' });
   if (res.status !== 200) throw new Error(`Paramètres : ${res.status} ${JSON.stringify(res.body)}`);
 }
 

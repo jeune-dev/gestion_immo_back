@@ -35,6 +35,9 @@ router.post('/especes', requirePermission(P.PAIEMENTS_ENCAISSER), idempotence({ 
 router.get('/', lire, validate(v.listeSchema, 'query'), paginate(), ctrl.lister);
 router.get('/:id', lire, id, ctrl.detail);
 router.get('/:id/quittances', requirePermission(P.QUITTANCES_LIRE), id, ctrl.quittances);
+// Reçu de chaque paiement, partiel compris.
+router.get('/:id/recu', lire, id, ctrl.recu);
+router.post('/:id/contestation/reponse', requirePermission(P.PAIEMENTS_REMBOURSER), id, validate(v.reponseContestationSchema), ctrl.repondreContestation);
 router.post('/:id/rembourser', requirePermission(P.PAIEMENTS_REMBOURSER), id, idempotence({ obligatoire: true }), validate(v.remboursementSchema), ctrl.rembourser);
 
 module.exports = router;

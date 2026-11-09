@@ -44,6 +44,8 @@ router.delete('/:id/photos/:photoId', ecrire, validate(v.paramPhoto, 'params'), 
 router.put('/:id/saisie', ecrire, id, validate(v.saisieSchema), ctrl.saisie);
 
 router.post('/:id/soumettre', ecrire, id, ctrl.soumettre);
+// Locataire sans application : version signée sur papier jointe par le propriétaire.
+router.post('/:id/acceptation-papier', ecrire, id, recevoirFichier('justificatif'), ctrl.acceptationPapier);
 router.post('/:id/corriger', ecrire, id, idempotence(), ctrl.corriger);
 
 module.exports = router;

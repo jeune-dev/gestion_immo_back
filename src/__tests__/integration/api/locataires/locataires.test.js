@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, nouveauProprietaire, superAdmin, creerLocataire, bailActif, activerLocataire, proprietaireEtLocataire,
+  api, nouveauProprietaire, superAdmin, creerLocataire, bailActif, activerLocataire, proprietaireEtLocataire, pngTest,
   telephoneUnique, emailUnique, compter, fermer, sequelize,
 } = require('../../../setup/helpers.js');
 
@@ -30,7 +30,7 @@ describe('Création', () => {
     expect(brut.id_document_number).toMatch(/^v1:/);
     expect(brut.id_document_number).not.toContain('5678');
     const [[audit]] = await sequelize.query("SELECT details FROM audit_logs WHERE action = 'locataire.creation' AND entity_id = :id", { replacements: { id: t.id } });
-    expect(audit.details).toEqual({ nom: 'Fatou Sarr', whatsapp_consent: false });
+    expect(audit.details).toEqual({ nom: 'Fatou Sarr' });
     expect(JSON.stringify(audit.details)).not.toContain('5678');
   });
 
@@ -44,10 +44,11 @@ describe('Création', () => {
     expect(inv.code_hash).not.toContain(res.body.data.invitation.code);
   });
 
-  test('consentement WhatsApp déclaré à la création : horodaté', async () => {
+  test('consentement WhatsApp envoyé à la création : ignoré (il se déclare avec une preuve, ou par le locataire)', async () => {
     const p = await nouveauProprietaire();
     const res = await creer(p, { whatsapp_consent: true });
-    expect(res.body.data.tenant).toMatchObject({ whatsapp_consent: true, whatsapp_consent_at: expect.any(String), whatsapp_consent_revoked_at: null });
+    expect(res.status).toBe(201);
+    expect(res.body.data.tenant).toMatchObject({ whatsapp_consent: false, whatsapp_consent_at: null });
   });
 
   test('élévation : owner_id, user_id, created_by, whatsapp_consent_revoked_at ignorés', async () => {
@@ -87,7 +88,6 @@ describe('Création', () => {
     ['type de pièce inconnu', { id_document_type: 'carte_fidelite' }],
     ['numéro de pièce de 61 caractères', { id_document_number: '9'.repeat(61) }],
     ['notes de 2001 caractères', { notes: 'n'.repeat(2001) }],
-    ['consentement non booléen', { whatsapp_consent: 'oui-oui' }],
   ])('validation 422 : %s', async (_l, surcharge) => {
     const p = await nouveauProprietaire();
     const corps = { first_name: 'Fatou', last_name: 'Sarr', phone: telephoneUnique(), ...surcharge };
@@ -186,7 +186,10 @@ describe('Invitation (§ 5 option A)', () => {
 });
 
 describe('Consentement WhatsApp (§ 54.3, § 56.1)', () => {
-  const consentir = (p, id, accorde) => api().post(`${URL}/${id}/consentement-whatsapp`).set(p.h).send({ accorde });
+  // Le propriétaire qui déclare le consentement joint sa preuve (capture, formulaire signé).
+  const consentir = async (p, id, accorde) => (accorde === true
+    ? api().post(`${URL}/${id}/consentement-whatsapp`).set(p.h).field('accorde', 'true').attach('fichier', await pngTest(), 'accord.png')
+    : api().post(`${URL}/${id}/consentement-whatsapp`).set(p.h).send({ accorde }));
 
   test('propriétaire : déclare le consentement recueilli puis le retire ; audit', async () => {
     const p = await nouveauProprietaire();
@@ -230,7 +233,8 @@ describe('Consentement WhatsApp (§ 54.3, § 56.1)', () => {
 
   test('déclarer un consentement déjà donné : sans effet (horodatage conservé)', async () => {
     const p = await nouveauProprietaire();
-    const t = await creerLocataire(p, { whatsapp_consent: true });
+    const t = await creerLocataire(p);
+    expect((await consentir(p, t.id, true)).status).toBe(200);
     const [[avant]] = await sequelize.query('SELECT whatsapp_consent_at FROM tenants WHERE id = :id', { replacements: { id: t.id } });
     expect((await consentir(p, t.id, true)).status).toBe(200);
     const [[apres]] = await sequelize.query('SELECT whatsapp_consent_at FROM tenants WHERE id = :id', { replacements: { id: t.id } });

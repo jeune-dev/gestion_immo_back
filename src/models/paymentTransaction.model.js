@@ -46,6 +46,10 @@ const PaymentTransaction = sequelize.define('PaymentTransaction', {
   expires_at: { type: DataTypes.DATE },
   raw_payload: { type: DataTypes.JSONB },
   initiated_by: { type: DataTypes.UUID, allowNull: false },
+  // Preuve en attente signalée une fois au propriétaire.
+  owner_reminded_at: { type: DataTypes.DATE },
+  // Espèces déclarées par le locataire : date de remise annoncée.
+  declared_paid_on: { type: DataTypes.DATEONLY },
 }, {
   tableName: 'payment_transactions',
   createdAt: 'created_at',

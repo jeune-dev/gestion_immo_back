@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { Op, QueryTypes, UniqueConstraintError } = require('sequelize');
 const sequelize = require('../../../config/db.js');
 const {
-  Inspection, InspectionRoom, InspectionItem, InspectionPhoto, Document, Lease, Apartment, Building, Tenant, Owner,
+  Inspection, InspectionRoom, InspectionItem, InspectionPhoto, Document, Lease, Apartment, Building, Tenant, Owner, User,
 } = require('../../../models/index.js');
 const { ETAT_DES_LIEUX, verifierTransition } = require('../../../config/transitions.js');
 const { TYPE_ETAT_DES_LIEUX } = require('../../../config/enums.js');
@@ -856,10 +856,47 @@ async function accepterTacitement(maintenant = new Date()) {
   return { acceptes, echecs };
 }
 
+/**
+ * Le silence ne vaut accord que si le locataire a pu répondre : il lui faut un
+ * compte, et le délai court à partir de son ouverture quand le compte a été
+ * créé après la soumission. Sans compte, l'état des lieux reste « soumis »
+ * jusqu'à sa réponse ou au document signé joint par le propriétaire.
+ */
+async function delaiReellementOuvert(inspection, maintenant, t) {
+  const tenant = await Tenant.findByPk(inspection.tenant_id, { attributes: ['id', 'user_id'], paranoid: false, transaction: t });
+  if (!tenant?.user_id) return false;
+  const compte = await User.findByPk(tenant.user_id, { attributes: ['id', 'created_at'], transaction: t });
+  if (!compte) return false;
+  const soumis = new Date(inspection.submitted_at);
+  if (new Date(compte.created_at) <= soumis) return true;
+  const { inspection_response_days: jours } = await parametres.proprietaire(inspection.owner_id, t);
+  return new Date(new Date(compte.created_at).getTime() + jours * 86_400_000) < maintenant;
+}
+
+/** État des lieux signé sur papier par le locataire : le propriétaire joint le document. */
+async function acceptationPapier(id, ownerId, user, fichier) {
+  if (!fichier) throw new ValidationError('Données invalides', ["Joignez l'état des lieux signé par le locataire (champ « fichier »)."], 'DOCUMENT_SIGNE_REQUIS');
+  await transactionAvecFichiers(async (t) => {
+    const inspection = await chargerPourProprietaire(Inspection, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, LIBELLE);
+    if (inspection.status !== 'soumis') throw new ConflictError("Seul un état des lieux soumis au locataire peut recevoir sa version signée.", 'TRANSITION_INVALIDE');
+    const signe = await documents.creerDocument({
+      ownerId, tenantId: inspection.tenant_id, entityType: 'inspection', entityId: id, category: 'etat_des_lieux',
+      fichier: { ...fichier, nomOrigine: fichier.nomOrigine || 'etat-des-lieux-signe' }, visibleToTenant: true, uploadedBy: user.id,
+    }, t);
+    const document = await accepterDansTransaction(inspection, { tacite: false, userId: user.id }, t);
+    await journaliser({
+      action: 'etat_des_lieux.changement_statut', entityType: 'inspection', entityId: id, ownerId,
+      details: { avant: 'soumis', apres: 'accepte', papier: true, document_signe_id: signe.id, document_id: document.id },
+    }, t);
+  });
+  return detail(id, ownerId);
+}
+
 async function accepterTacitementUn(id, maintenant) {
   return transactionAvecFichiers(async (t) => {
     const inspection = await Inspection.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!inspection || inspection.status !== 'soumis' || !(new Date(inspection.response_deadline) < maintenant)) return false;
+    if (!(await delaiReellementOuvert(inspection, maintenant, t))) return false;
     const document = await accepterDansTransaction(inspection, { tacite: true, userId: null }, t);
     await journaliser({
       action: 'etat_des_lieux.changement_statut', entityType: 'inspection', entityId: id, ownerId: inspection.owner_id,
@@ -884,5 +921,5 @@ module.exports = {
   ajouterElement, modifierElement, supprimerElement, saisie, ajouterPhoto, supprimerPhoto,
   soumettre, corriger, supprimer, comparaison, pdfProprietaire,
   listerLocataire, detailLocataire, pdfLocataire, accepter, contester,
-  accepterTacitement,
+  accepterTacitement, acceptationPapier,
 };

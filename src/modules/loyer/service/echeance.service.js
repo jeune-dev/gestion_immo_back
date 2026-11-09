@@ -96,9 +96,10 @@ function periodesAGenerer(bail, dernierDebut, limite) {
 
 /**
  * Génère (ou prolonge) les échéances d'un bail actif.
+ * @param {string|null} [jusquA]  génère au moins les périodes commençant jusqu'à cette date
  * @returns {Promise<number>} nombre d'échéances créées
  */
-async function generer(lease, reglages, t, jour = aujourdhui()) {
+async function generer(lease, reglages, t, jour = aujourdhui(), jusquA = null) {
   const derniere = await RentSchedule.findOne({
     where: { lease_id: lease.id },
     attributes: ['period_start'],
@@ -106,7 +107,10 @@ async function generer(lease, reglages, t, jour = aujourdhui()) {
     transaction: t,
   });
   const base = lease.start_date > jour ? lease.start_date : jour;
-  const limite = ajouterMois(base, HORIZON_MOIS);
+  const horizon = ajouterMois(base, HORIZON_MOIS);
+  // `jusquA` : avant d'appliquer un nouveau loyer, les périodes qui le précèdent
+  // sont créées à l'ancien montant, même au-delà de l'horizon habituel.
+  const limite = jusquA && jusquA > horizon ? jusquA : horizon;
   const periodes = periodesAGenerer(lease, derniere?.period_start || null, limite);
   if (!periodes.length) return 0;
 

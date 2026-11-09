@@ -3,9 +3,8 @@
 const { Op } = require('sequelize');
 const sequelize = require('../../../config/db.js');
 const {
-  Lease, Apartment, Building, Tenant, Deposit, DepositTransaction, RentSchedule, Inspection, LeaseDocument,
+  Lease, LeaseAmendment, Apartment, Building, Tenant, Deposit, DepositTransaction, RentSchedule, Inspection, LeaseDocument,
 } = require('../../../models/index.js');
-const { MOIS_PAR_PERIODICITE } = require('../../../config/enums.js');
 const { chargerPourProprietaire, verifierReference } = require('../../../utils/acces.js');
 const { ordre } = require('../../../utils/liste.js');
 const { prochainNumero, pad } = require('../../../utils/compteur.js');
@@ -17,6 +16,7 @@ const parametres = require('../../parametres/service/parametres.service.js');
 const droits = require('../../abonnement/service/droits.service.js');
 const documents = require('../../document/service/document.service.js');
 const modeles = require('./modeleBail.service.js');
+const accord = require('./accord.service.js');
 const { notifier, destinataireLocataire, destinatairesProprietaire } = require('../../notification/service/notification.service.js');
 const { journaliser, difference } = require('../../audit/service/audit.service.js');
 
@@ -59,7 +59,7 @@ async function lister(ownerId, f, { limit, offset }) {
 
 async function detail(id, ownerId) {
   const lease = await chargerPourProprietaire(Lease, id, ownerId, { include: INCLUDE_DETAIL }, 'Bail');
-  const [contrats, edl, soldes, pieces] = await Promise.all([
+  const [contrats, edl, soldes, pieces, propositions] = await Promise.all([
     LeaseDocument.findAll({ where: { lease_id: id }, attributes: ['id', 'version', 'template_version', 'document_id', 'special_clauses', 'shared_at', 'created_at'], order: [['version', 'DESC']] }),
     Inspection.findAll({ where: { lease_id: id, status: { [Op.ne]: 'remplace' } }, attributes: ['id', 'type', 'version', 'status', 'performed_at', 'accepted_at'] }),
     RentSchedule.findAll({
@@ -71,8 +71,9 @@ async function detail(id, ownerId) {
       raw: true,
     }),
     documents.listerPourEntite('lease', id),
+    LeaseAmendment.findAll({ where: { lease_id: id }, order: [['created_at', 'DESC']] }),
   ]);
-  return { ...lease.toJSON(), contracts: contrats, inspections: edl, balance: soldes[0], documents: pieces.map(documents.versApi) };
+  return { ...lease.toJSON(), contracts: contrats, inspections: edl, balance: soldes[0], documents: pieces.map(documents.versApi), amendments: propositions };
 }
 
 async function creer(ownerId, user, donnees) {
@@ -108,7 +109,11 @@ async function modifier(id, ownerId, donnees) {
     const fusion = { ...lease.toJSON(), ...donnees };
     if (fusion.end_date && fusion.end_date <= fusion.start_date) throw new ValidationError('Données invalides', ['La date de fin doit être postérieure à la date de début']);
     const avant = lease.toJSON();
-    await lease.update(donnees, { transaction: t, fields: CHAMPS_BROUILLON });
+    // Le locataire a accepté (ou refusé) l'ancienne version : la nouvelle lui sera reproposée.
+    const accordEfface = Boolean(accord.accordAEffacer(lease));
+    await lease.update({ ...donnees, ...(accordEfface ? accord.ACCORD_EFFACE : {}) }, {
+      transaction: t, fields: [...CHAMPS_BROUILLON, ...(accordEfface ? Object.keys(accord.ACCORD_EFFACE) : [])],
+    });
     await journaliser({ action: 'bail.modification', entityType: 'lease', entityId: id, ownerId, details: difference(avant, donnees, CHAMPS_BROUILLON) }, t);
     return lease;
   });
@@ -161,6 +166,14 @@ async function activer(id, ownerId) {
 
     const reglages = await parametres.proprietaire(ownerId, t);
     const avertissements = [];
+    // Accord du locataire sur CE brouillon (application ou bail signé joint).
+    if (reglages.lease_acceptance_policy !== 'desactive' && !lease.tenant_accepted_at) {
+      const message = lease.tenant_refused_at
+        ? 'Le locataire a refusé ce bail : modifiez-le puis proposez-le à nouveau.'
+        : 'Le locataire n’a pas encore accepté ce bail : proposez-le dans son espace ou joignez le bail signé.';
+      if (reglages.lease_acceptance_policy === 'bloquant') throw new ConflictError(message, 'ACCORD_LOCATAIRE_REQUIS');
+      avertissements.push({ code: 'ACCORD_LOCATAIRE_ABSENT', message });
+    }
     if (reglages.entry_inspection_policy !== 'desactive') {
       const edl = await Inspection.count({ where: { lease_id: id, type: 'entree', status: { [Op.in]: ['soumis', 'accepte'] } }, transaction: t });
       if (!edl) {
@@ -274,7 +287,21 @@ async function terminer(id, ownerId, { ended_on: dateSortie, termination_reason:
         donnees: { lease_id: id, deposit_id: deposit.id },
       });
     }
-    return lease;
+    const tenant = await Tenant.findByPk(lease.tenant_id, { attributes: ['id', 'user_id'], paranoid: false, transaction: t });
+    await notifier(t, {
+      destinataires: [destinataireLocataire(tenant)], ownerId, type: 'bail',
+      titre: 'Fin de votre bail',
+      corps: `Votre bail ${lease.reference} a pris fin le ${formatFr(dateSortie)}.${deposit && deposit.amount_received > 0 ? ` Votre caution doit vous être restituée avant le ${formatFr(deposit.refund_due_date)}, déduction faite des sommes justifiées.` : ''}`,
+      donnees: { lease_id: id },
+    });
+
+    // Départ sans congé enregistré avant la fin prévue du bail : signalé, pas bloqué
+    // (départ d'un commun accord, abandon du logement…).
+    const avertissements = [];
+    if (!lease.notice_given_at && !(lease.end_date && dateSortie >= lease.end_date)) {
+      avertissements.push({ code: 'CONGE_ABSENT', message: 'Aucun congé n’était enregistré pour ce bail avant la sortie.' });
+    }
+    return { lease, avertissements, echeance_proratisee: proratisee };
   });
 }
 
@@ -304,44 +331,6 @@ async function cloturer(id, ownerId) {
     await lease.update({ status: 'clos', closed_at: new Date() }, { transaction: t });
     await journaliser({ action: 'bail.changement_statut', entityType: 'lease', entityId: id, ownerId, details: { avant: 'termine', apres: 'clos' } }, t);
     return lease;
-  });
-}
-
-/**
- * Modification du loyer d'un bail actif (§ 40 « modification de loyer »).
- * Les échéances NON ENCAISSÉES commençant à partir de la date d'effet sont
- * recalculées ; les autres restent intactes (historique financier).
- */
-async function modifierLoyer(id, ownerId, { rent_amount: loyer, charges_amount: charges, effective_from: effet }) {
-  return sequelize.transaction(async (t) => {
-    const lease = await chargerPourProprietaire(Lease, id, ownerId, { transaction: t, lock: t.LOCK.UPDATE }, 'Bail');
-    if (lease.status !== 'actif') throw new ConflictError('Seul le loyer d’un bail actif se modifie ainsi.', 'TRANSITION_INVALIDE');
-    // Pas de révision rétroactive : un impayé déjà échu (et relancé) garde son montant.
-    if (effet < aujourdhui()) throw new ValidationError('Données invalides', ["La date d'effet ne peut pas être antérieure à aujourd'hui"], 'DATE_EFFET_PASSEE');
-    const avant = { rent_amount: lease.rent_amount, charges_amount: lease.charges_amount };
-    const nouveau = { rent_amount: loyer ?? lease.rent_amount, charges_amount: charges ?? lease.charges_amount };
-    await lease.update(nouveau, { transaction: t });
-
-    const aRecalculer = await RentSchedule.findAll({
-      where: { lease_id: id, period_start: { [Op.gte]: effet }, amount_paid: 0, status: { [Op.in]: ['a_venir', 'a_payer'] } },
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-    const mois = MOIS_PAR_PERIODICITE[lease.periodicity];
-    for (const e of aRecalculer) {
-      // Période pleine : nouveau montant × mois ; période proratisée : même ratio qu'avant.
-      const ratio = e.rent_amount + e.charges_amount > 0 && avant.rent_amount + avant.charges_amount > 0
-        ? (e.rent_amount + e.charges_amount) / ((avant.rent_amount + avant.charges_amount) * mois)
-        : 1;
-      const rent = Math.round(nouveau.rent_amount * mois * ratio);
-      const ch = Math.round(nouveau.charges_amount * mois * ratio);
-      await e.update({ rent_amount: rent, charges_amount: ch, amount_due: rent + ch }, { transaction: t });
-    }
-    await journaliser({
-      action: 'bail.modification_loyer', entityType: 'lease', entityId: id, ownerId,
-      details: { avant, apres: nouveau, date_effet: effet, echeances_recalculees: aRecalculer.length },
-    }, t);
-    return { lease, echeances_recalculees: aRecalculer.length };
   });
 }
 
@@ -391,4 +380,4 @@ async function contrats(id, ownerId) {
   });
 }
 
-module.exports = { lister, detail, creer, modifier, activer, annuler, terminer, cloturer, modifierLoyer, genererContrat, contrats };
+module.exports = { lister, detail, creer, modifier, activer, annuler, terminer, cloturer, genererContrat, contrats };

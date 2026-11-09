@@ -12,7 +12,7 @@ const errorHandler = require('../../../../middlewares/errorHandler.middleware.js
 const routeurLocataire = require('../../../../modules/etatDesLieux/route/etatDesLieuxLocataire.route.js');
 const { accepterTacitement } = require('../../../../modules/etatDesLieux/service/etatDesLieux.service.js');
 const {
-  nouveauProprietaire, creerImmeuble, creerAppartement, creerLocataire, activerLocataire, fermer, sequelize,
+  nouveauProprietaire, creerImmeuble, creerAppartement, creerLocataire, activerLocataire, fermer, sequelize, pngTest,
 } = require('../../../setup/helpers.js');
 
 /**
@@ -84,6 +84,9 @@ async function preparerEdl(etape) {
   const proprio = await nouveauProprietaire();
   const bail = await nouveauBail(proprio, { type: 'f3', is_furnished: true });
   const locataire = await activerLocataire(proprio, bail.tenant);
+  // Le locataire accepte le bail dans son espace : seul l'état des lieux reste à faire.
+  attendu(await api().post(`/api/v1/baux/${bail.lease.id}/proposer`).set(proprio.h).send({}), 200, 'Proposition du bail');
+  attendu(await api().post(`/api/v1/locataire/baux/${bail.lease.id}/accepter`).set(locataire.h).send({}), 200, 'Accord du locataire');
   const ctx = {
     proprio, bail, locataire, entree: null, v1: null, sortie: null,
   };
@@ -454,6 +457,22 @@ describe('États des lieux (§ 52)', () => {
     expect(audit).toEqual({ actor_role: 'systeme', user_id: null });
     // Déjà acceptés : un second passage ne fait rien.
     expect(await accepterTacitement()).toEqual({ acceptes: 0, echecs: 0 });
+  });
+
+  test('locataire sans compte : jamais d’acceptation tacite ; version signée jointe par le propriétaire', async () => {
+    const { proprio, bail } = await preparerEdl('sortie');
+    const [sortie] = await sequelize.query("SELECT id FROM inspections WHERE lease_id = :l AND type = 'sortie'", { replacements: { l: bail.lease.id }, type: QueryTypes.SELECT });
+    expect((await api().post(`${EDL}/${sortie.id}/soumettre`).set(proprio.h).send({})).status).toBe(200);
+    // Le locataire n'a pas (ou plus) d'accès à l'application.
+    await sequelize.query('UPDATE tenants SET user_id = NULL WHERE id = :t', { replacements: { t: bail.tenant.id } });
+    await sequelize.query("UPDATE inspections SET response_deadline = now() - interval '1 hour' WHERE id = :id", { replacements: { id: sortie.id } });
+    await accepterTacitement();
+    expect((await api().get(`${EDL}/${sortie.id}`).set(proprio.h)).body.data.inspection.status).toBe('soumis');
+
+    expect((await api().post(`${EDL}/${sortie.id}/acceptation-papier`).set(proprio.h).send({})).status).toBe(400);
+    const papier = await api().post(`${EDL}/${sortie.id}/acceptation-papier`).set(proprio.h).attach('fichier', await pngTest(), 'edl-signe.png');
+    expect(papier.status).toBe(200);
+    expect(papier.body.data.inspection).toMatchObject({ status: 'accepte', accepted_tacitly: false });
   });
 
   test('suppression d’un premier brouillon', async () => {

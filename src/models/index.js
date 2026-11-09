@@ -39,6 +39,7 @@ const TenantInvitation = require('./tenantInvitation.model.js');
 const LeaseTemplate = require('./leaseTemplate.model.js');
 const Lease = require('./lease.model.js');
 const LeaseDocument = require('./leaseDocument.model.js');
+const LeaseAmendment = require('./leaseAmendment.model.js');
 const Contractor = require('./contractor.model.js');
 const Incident = require('./incident.model.js');
 const WorkOrder = require('./workOrder.model.js');
@@ -106,6 +107,8 @@ Apartment.hasMany(Lease, fk('apartment_id', 'leases'));
 Tenant.hasMany(Lease, fk('tenant_id', 'leases'));
 Lease.hasOne(Deposit, fk('lease_id', 'deposit'));
 Lease.hasMany(LeaseDocument, fk('lease_id', 'documents'));
+Lease.hasMany(LeaseAmendment, fk('lease_id', 'amendments'));
+LeaseAmendment.belongsTo(Lease, fk('lease_id', 'lease'));
 LeaseDocument.belongsTo(LeaseTemplate, fk('template_id', 'template'));
 LeaseDocument.belongsTo(Lease, fk('lease_id', 'lease'));
 
@@ -200,7 +203,7 @@ module.exports = {
   Role, User, Owner, OwnerMember, SubscriptionPlan, Subscription, SubscriptionPayment,
   RefreshToken, PasswordReset, DeviceToken, PlatformSetting, IdempotencyKey, Counter,
   AuditLog, Notification, WhatsappTemplate, Document, MessageDelivery,
-  Building, Apartment, Tenant, TenantInvitation, LeaseTemplate, Lease, LeaseDocument,
+  Building, Apartment, Tenant, TenantInvitation, LeaseTemplate, Lease, LeaseDocument, LeaseAmendment,
   Contractor, Incident, WorkOrder, WorkOrderEvent, WorkPhoto, MessageThread, Message,
   Inspection, InspectionRoom, InspectionItem, InspectionPhoto,
   RentSchedule, ChargeInvoice, ChargeAllocation, Charge,

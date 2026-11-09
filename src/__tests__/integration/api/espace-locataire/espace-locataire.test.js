@@ -138,7 +138,8 @@ describe('Consentement WhatsApp (locataire)', () => {
   test('fiche d’un AUTRE locataire : 403, consentement de l’autre inchangé', async () => {
     const { locataire } = await proprietaireEtLocataire();
     const autre = await nouveauProprietaire();
-    const victime = await creerLocataire(autre, { whatsapp_consent: true });
+    const victime = await creerLocataire(autre);
+    await sequelize.query('UPDATE tenants SET whatsapp_consent = true, whatsapp_consent_at = now() WHERE id = :t', { replacements: { t: victime.id } });
     const res = await api().post(`${BASE}/consentement-whatsapp`).set(locataire.h).send({ accorde: false, tenant_id: victime.id });
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('ACCES_AUTRE_LOCATAIRE');

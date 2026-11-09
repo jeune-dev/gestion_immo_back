@@ -25,6 +25,10 @@ const DEFAUTS_PROPRIETAIRE = Object.freeze({
   late_grace_days: 0,
   // § 52.4 — état des lieux d'entrée requis avant « Occupé » (avertissement bloquant configurable).
   entry_inspection_policy: 'bloquant',
+  // Accord du locataire (application ou papier signé) exigé avant d'activer un bail.
+  lease_acceptance_policy: 'bloquant',
+  // Délai minimal entre la proposition d'un nouveau loyer et sa date d'effet.
+  rent_change_notice_days: 30,
   // § 52.3 — délai laissé au locataire pour accepter ou contester.
   inspection_response_days: 7,
   // § 55.4 — délai de restitution de la caution après la fin du bail.
@@ -39,6 +43,8 @@ const schemaParametresProprietaire = Joi.object({
   schedule_notice_days: Joi.number().integer().min(0).max(30),
   late_grace_days: Joi.number().integer().min(0).max(30),
   entry_inspection_policy: Joi.string().valid(...codes(POLITIQUE_EDL_ENTREE)),
+  lease_acceptance_policy: Joi.string().valid(...codes(POLITIQUE_EDL_ENTREE)),
+  rent_change_notice_days: Joi.number().integer().min(0).max(180),
   inspection_response_days: Joi.number().integer().min(1).max(60),
   deposit_refund_days: Joi.number().integer().min(1).max(180),
   channel_order: Joi.array().items(Joi.string().valid('push', 'whatsapp', 'sms')).min(1).max(3).unique(),

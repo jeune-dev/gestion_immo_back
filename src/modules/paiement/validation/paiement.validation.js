@@ -122,8 +122,18 @@ const preuveSchema = Joi.object({
 
 const moyensLocataireSchema = Joi.object({ lease_id: uuid.required() });
 
+/** Espèces remises par le locataire : rien n'est payé avant la confirmation du bailleur. */
+const especesLocataireSchema = Joi.object({
+  ...cible,
+  amount: montantPositif.required(),
+  paid_on: dateIso.required().custom((v, aide) => (v <= aujourdhui() ? v : aide.message('{{#label}} ne peut pas être dans le futur'))),
+}).xor('rent_schedule_id', 'charge_id');
+
+/** Réponse du propriétaire à la contestation d'un remboursement. */
+const reponseContestationSchema = Joi.object({ response: Joi.string().trim().min(3).max(2000).required() });
+
 module.exports = {
   encaissementSchema, listeSchema, remboursementSchema, transactionsSchema, rejetSchema,
   rapprochementsSchema, resolutionSchema, rejetRapprochementSchema, moyenSchema,
-  initiationSchema, preuveSchema, moyensLocataireSchema,
+  initiationSchema, preuveSchema, moyensLocataireSchema, especesLocataireSchema, reponseContestationSchema,
 };

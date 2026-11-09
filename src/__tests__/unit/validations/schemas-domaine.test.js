@@ -90,10 +90,10 @@ describe('compte.validation', () => {
 });
 
 describe('locataire.validation', () => {
-  test('création : consentement et invitation à false par défaut, owner_id / user_id retirés', () => {
+  test('création : invitation à false par défaut ; consentement WhatsApp, owner_id / user_id retirés', () => {
     const { error, value } = valider(locataire.creationSchema, { first_name: 'F', last_name: 'S', phone: '771234567', owner_id: 'x', user_id: 'y' });
     expect(error).toBeUndefined();
-    expect(value).toEqual({ first_name: 'F', last_name: 'S', phone: '+221771234567', whatsapp_consent: false, send_invitation: false });
+    expect(value).toEqual({ first_name: 'F', last_name: 'S', phone: '+221771234567', send_invitation: false });
   });
 
   test('pièce d’identité : type en liste blanche, numéro borné ; e-mail vide permis', () => {

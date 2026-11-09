@@ -4,6 +4,7 @@ const asyncHandler = require('../../../middlewares/asyncHandler.js');
 const { ok, created, paginated } = require('../../../utils/response.js');
 const S = require('../service/espaceLocataire.service.js');
 const P = require('../../paiement/service/paiementLocataire.service.js');
+const A = require('../../bail/service/accord.service.js');
 
 exports.accueil = asyncHandler(async (req, res) => ok(res, { homes: await S.accueil(req.tenantIds) }));
 exports.logement = asyncHandler(async (req, res) => ok(res, { leases: await S.logements(req.tenantIds) }));
@@ -36,3 +37,25 @@ exports.preuve = asyncHandler(async (req, res) => {
     transaction: { id: tx.id, reference: tx.reference, amount: tx.amount, wallet: tx.wallet, status: tx.status },
   }, 'Preuve transmise : en attente de validation par votre bailleur');
 });
+
+// Accords : bail proposé, avenant de loyer, congé.
+exports.accords = asyncHandler(async (req, res) => ok(res, await A.accords(req.tenantIds)));
+exports.accepterBail = asyncHandler(async (req, res) => ok(res, { lease: await A.accepterBail(req.user, req.tenantIds, req.params.id) }, 'Bail accepté'));
+exports.refuserBail = asyncHandler(async (req, res) => ok(res, { lease: await A.refuserBail(req.user, req.tenantIds, req.params.id, req.body) }, 'Bail refusé'));
+exports.accepterAvenant = asyncHandler(async (req, res) => ok(res, await A.accepterAvenant(req.user, req.tenantIds, req.params.id), 'Nouveau loyer accepté'));
+exports.refuserAvenant = asyncHandler(async (req, res) => ok(res, { amendment: await A.refuserAvenant(req.user, req.tenantIds, req.params.id, req.body) }, 'Nouveau loyer refusé'));
+exports.conge = asyncHandler(async (req, res) => ok(res, { lease: await A.congeLocataire(req.tenantIds, req.params.id, req.body) }, 'Congé envoyé à votre bailleur'));
+exports.annulerConge = asyncHandler(async (req, res) => ok(res, { lease: await A.annulerCongeLocataire(req.tenantIds, req.params.id) }, 'Congé retiré'));
+
+// Espèces déclarées, reçu d'un paiement, contestation d'un remboursement.
+const Recu = require('../../paiement/service/recuPaiement.service.js');
+const { envoyerPdf } = require('../../paiement/controller/paiement.controller.js');
+
+exports.especes = asyncHandler(async (req, res) => {
+  const tx = await P.declarerEspeces(req.user, req.tenantIds, req.body);
+  return created(res, {
+    transaction: { id: tx.id, reference: tx.reference, amount: tx.amount, wallet: tx.wallet, status: tx.status },
+  }, 'Remise d’espèces signalée : en attente de confirmation par votre bailleur');
+});
+exports.recu = asyncHandler(async (req, res) => envoyerPdf(res, await Recu.recuLocataire(req.params.id, req.tenantIds)));
+exports.contesterRemboursement = asyncHandler(async (req, res) => ok(res, { payment: await Recu.contester(req.user, req.tenantIds, req.params.id, req.body) }, 'Contestation envoyée à votre bailleur'));

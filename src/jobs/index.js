@@ -7,6 +7,8 @@ const echeances = require('../modules/loyer/service/echeance.service.js');
 const relances = require('../modules/loyer/service/relance.service.js');
 const paiementsLocataire = require('../modules/paiement/service/paiementLocataire.service.js');
 const cautions = require('../modules/caution/service/caution.service.js');
+const accords = require('../modules/bail/service/accord.service.js');
+const recusPaiement = require('../modules/paiement/service/recuPaiement.service.js');
 const charges = require('../modules/charge/service/charge.service.js');
 const etatsDesLieux = require('../modules/etatDesLieux/service/etatDesLieux.service.js');
 const abonnements = require('../modules/abonnement/service/abonnement.service.js');
@@ -35,6 +37,10 @@ const TACHES = [
   { nom: 'expiration_paiements', planification: '*/10 * * * *', fn: () => paiementsLocataire.expirerDemandes() },
   // § 55.4 — rappels de restitution de caution.
   { nom: 'cautions', planification: '30 8 * * *', fn: () => cautions.alertesRestitution() },
+  // Preuves et espèces déclarées non traitées après 48 h : rappel unique au propriétaire.
+  { nom: 'preuves_en_attente', planification: '20 * * * *', fn: () => recusPaiement.rappelerPreuves() },
+  // Fin de bail et congé : rappels J-60, J-30, J-7, J0 puis date dépassée.
+  { nom: 'fins_de_bail', planification: '45 8 * * *', fn: () => accords.alertesFinDeBail() },
   // § 52.3 — acceptation tacite des états des lieux au terme du délai de réponse.
   { nom: 'etats_des_lieux', planification: '5 * * * *', fn: () => etatsDesLieux.accepterTacitement() },
   // § 31 — abonnements et essais échus → lecture seule.

@@ -187,7 +187,7 @@ describe('planificateur : chaque tâche s’exécute sans erreur sur une base pe
   test('la liste des tâches est complète et chaque planification est une expression cron valide', () => {
     const cron = require('node-cron');
     expect(TACHES.map((t) => t.nom).sort()).toEqual(
-      ['abonnements', 'cautions', 'echeances', 'etats_des_lieux', 'expiration_paiements', 'nettoyage', 'quittances_manquantes', 'relances'].sort()
+      ['abonnements', 'cautions', 'echeances', 'etats_des_lieux', 'expiration_paiements', 'fins_de_bail', 'nettoyage', 'preuves_en_attente', 'quittances_manquantes', 'relances'].sort()
     );
     for (const t of TACHES) expect(cron.validate(t.planification)).toBe(true);
   });
