@@ -36,6 +36,28 @@ jobs:
     environment: production
 
     steps:
+      # Contrôle sur le runner, AVANT la connexion. Sans lui, un secret absent
+      # et un secret présent mais non transmis au serveur échouent de la même
+      # façon, et on ne sait pas lequel des deux chercher.
+      - name: Vérifier que les secrets sont renseignés
+        env:
+          EMAIL: ${{ secrets.KODAFRIK_ADMIN_EMAIL }}
+          MDP: ${{ secrets.KODAFRIK_ADMIN_PASSWORD }}
+        run: |
+          manque=""
+          [ -n "${EMAIL}" ] || manque="KODAFRIK_ADMIN_EMAIL"
+          [ -n "${MDP}" ] || manque="${manque} KODAFRIK_ADMIN_PASSWORD"
+          if [ -n "${manque}" ]; then
+            echo "::error::Secret(s) absent(s) de CE dépôt :${manque# }"
+            echo "À ajouter dans Settings → Secrets and variables → Actions → New repository secret,"
+            echo "sur le dépôt jeune-dev/gestion_immo_back lui-même."
+            echo
+            echo "Les secrets sont PAR DÉPÔT : les avoir mis dans Saambiz_Back ne vaut pas pour celui-ci."
+            echo "Un secret d'organisation doit, lui, être explicitement partagé avec ce dépôt."
+            exit 1
+          fi
+          echo "Les deux secrets sont renseignés."
+
       - name: Créer ou rétablir le super admin
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
@@ -55,9 +77,12 @@ jobs:
             APP_DIR="/var/www/kerimmo-api"
             COMPOSE="docker compose -f docker-compose.prod.yml"
 
+            # L'étape précédente a déjà constaté que les secrets EXISTENT. S'ils
+            # sont vides ici, c'est qu'ils ne traversent pas la connexion : le
+            # problème est `envs`, pas la configuration du dépôt.
             if [ -z "${KODAFRIK_ADMIN_EMAIL:-}" ] || [ -z "${KODAFRIK_ADMIN_PASSWORD:-}" ]; then
-              echo "ERREUR : KODAFRIK_ADMIN_EMAIL et KODAFRIK_ADMIN_PASSWORD ne sont pas renseignés dans ce dépôt." >&2
-              echo "Settings → Secrets and variables → Actions → New repository secret." >&2
+              echo "ERREUR : les secrets existent sur le runner mais arrivent vides sur le serveur." >&2
+              echo "C'est le passage par « envs » qui est en cause, pas les secrets du dépôt." >&2
               exit 1
             fi
 
