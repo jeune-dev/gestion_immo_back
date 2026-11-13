@@ -24,9 +24,43 @@ storage.ensureUploadDir();
 
 const app = express();
 
-// Derrière nginx sur le même hôte : un seul proxy de confiance (lecture
-// correcte de X-Forwarded-For par le limiteur de débit).
-app.set('trust proxy', parseInt(process.env.TRUST_PROXY_HOPS || '1', 10));
+// Qui a le droit de dire l'adresse du client, pour le limiteur de débit et le
+// journal d'audit.
+//
+// Une LISTE plutôt qu'un nombre de sauts, parce que deux voies mènent ici et
+// qu'elles n'ont pas la même longueur de chaîne : en direct
+// (api.kerimmo.kodafrik.com), UN proxy — le nginx de cette machine ; par le
+// back-office (admin.kodafrik.com), DEUX — celui du dashboard puis celui-ci.
+//
+// Monter le nombre de sauts à 2 attribuerait correctement les requêtes du
+// back-office, mais rendrait X-Forwarded-For FORGEABLE sur la voie directe,
+// qui reste publique : un client annonçant « 1.2.3.4 » se verrait attribuer
+// cette adresse et échapperait à LOGIN_MAX_TENTATIVES. Une liste, elle,
+// remonte la chaîne et s'arrête au premier maillon inconnu, quelle que soit
+// sa longueur.
+//
+//   - `loopback` et `uniquelocal` : le port du conteneur n'est publié que sur
+//     127.0.0.1 (docker-compose.prod.yml), donc le pair direct est forcément
+//     une adresse privée — la passerelle Docker.
+//   - TRUST_PROXY_SUPPLEMENTAIRE : les proxys PUBLICS devant celui-ci,
+//     séparés par des virgules (l'adresse du VPS du back-office). Vide, le
+//     comportement est celui d'avant.
+//
+// TRUST_PROXY_HOPS est l'ancien réglage, et il reste honoré — mais seulement
+// au-DELÀ de 1. `TRUST_PROXY_HOPS=1` est la valeur du .env.example, donc celle
+// que portent les installations existantes : la traiter comme un choix
+// délibéré empêcherait la liste de prendre effet là où elle est utile, et il
+// faudrait aller modifier chaque serveur. Au-dessus de 1, en revanche, c'est
+// forcément une décision prise en connaissance de cause : on la respecte.
+const sautsForces = parseInt(process.env.TRUST_PROXY_HOPS || '', 10);
+const proxiesSupplementaires = String(process.env.TRUST_PROXY_SUPPLEMENTAIRE || '')
+  .split(',')
+  .map((adresse) => adresse.trim())
+  .filter(Boolean);
+app.set(
+  'trust proxy',
+  sautsForces > 1 ? sautsForces : ['loopback', 'uniquelocal', ...proxiesSupplementaires],
+);
 app.disable('x-powered-by');
 
 // ── Corrélation et mesure — EN PREMIER (repris de Widjila) ─────────────────
