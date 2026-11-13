@@ -1,0 +1,85 @@
+name: Créer l'admin Kodafrik
+
+# Ouvre (ou rétablit) le compte du back-office KODAFRIK sur le serveur, sans
+# SSH à faire soi-même et sans passer par un autre super admin : c'est le cas
+# prévu par scripts/creer-super-admin.js, que ce bouton ne fait que lancer.
+#
+# LANCEMENT À LA MAIN UNIQUEMENT. Jamais sur « push » : le script REMET LE MOT
+# DE PASSE À NEUF quand le compte existe déjà, ferme toutes ses sessions et
+# redemande la configuration de la double authentification. Accroché à chaque
+# déploiement, il réinitialiserait le compte en boucle.
+#
+# Secrets à ajouter UNE FOIS dans ce dépôt
+# (Settings → Secrets and variables → Actions → New repository secret) :
+#   KODAFRIK_ADMIN_EMAIL     adresse du compte à ouvrir
+#   KODAFRIK_ADMIN_PASSWORD  son mot de passe
+# Les trois secrets du déploiement (VPS_HOST, VPS_USER, VPS_SSH_KEY) sont déjà
+# en place : ce sont les mêmes que ceux de ci.yml, rien à refaire.
+#
+# Le mot de passe ne figure ni dans ce fichier, ni dans les journaux : il est
+# lu dans un secret, transmis au serveur par la connexion SSH, et GitHub le
+# masque dans toute sortie. Aucun `set -x` ici, pour la même raison.
+on:
+  workflow_dispatch:
+
+# Deux lancements simultanés écriraient le même compte en même temps. Le
+# script prend un verrou en base (SELECT … FOR UPDATE), mais autant ne pas
+# compter dessus pour une opération lancée à la main.
+concurrency:
+  group: admin-kodafrik-kerimmo
+  cancel-in-progress: false
+
+jobs:
+  creer:
+    name: Ouvrir le compte sur le VPS
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Créer ou rétablir le super admin
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        env:
+          KODAFRIK_ADMIN_EMAIL: ${{ secrets.KODAFRIK_ADMIN_EMAIL }}
+          KODAFRIK_ADMIN_PASSWORD: ${{ secrets.KODAFRIK_ADMIN_PASSWORD }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          # Sans cette ligne, les deux variables resteraient sur le runner :
+          # `envs` est ce qui les fait exister de l'autre côté de la connexion.
+          envs: KODAFRIK_ADMIN_EMAIL,KODAFRIK_ADMIN_PASSWORD
+          command_timeout: "5m"
+          script: |
+            set -eu
+
+            APP_DIR="/var/www/kerimmo-api"
+            COMPOSE="docker compose -f docker-compose.prod.yml"
+
+            if [ -z "${KODAFRIK_ADMIN_EMAIL:-}" ] || [ -z "${KODAFRIK_ADMIN_PASSWORD:-}" ]; then
+              echo "ERREUR : KODAFRIK_ADMIN_EMAIL et KODAFRIK_ADMIN_PASSWORD ne sont pas renseignés dans ce dépôt." >&2
+              echo "Settings → Secrets and variables → Actions → New repository secret." >&2
+              exit 1
+            fi
+
+            if [ ! -d "${APP_DIR}" ]; then
+              echo "ERREUR : ${APP_DIR} introuvable — l'API n'est pas déployée sur ce serveur." >&2
+              exit 1
+            fi
+            cd "${APP_DIR}"
+
+            if [ -z "$(${COMPOSE} ps -q backend)" ]; then
+              echo "ERREUR : le conteneur « backend » ne tourne pas. Déployez l'API d'abord." >&2
+              exit 1
+            fi
+
+            # -T : pas de pseudo-terminal. Sans lui, `exec` échoue à travers
+            # une connexion SSH non interactive comme celle-ci.
+            ${COMPOSE} exec -T backend \
+              node scripts/creer-super-admin.js \
+              "${KODAFRIK_ADMIN_EMAIL}" "${KODAFRIK_ADMIN_PASSWORD}" Admin Kodafrik
+
+      - name: Ce qu'il reste à faire
+        run: |
+          echo "Compte ouvert sur Kërimmo."
+          echo "La double authentification est obligatoire : elle se configure"
+          echo "à la première ouverture du back-office."
