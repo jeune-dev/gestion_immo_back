@@ -4,7 +4,7 @@
 # ============================================================
 
 # ── Étape 1 : dépendances de production ──────────────────────────────────────
-FROM node:26.13.0-slim AS deps
+FROM node:26.13.1-slim AS deps
 WORKDIR /app
 COPY package*.json ./
 # Outils de compilation : repli de bcrypt si aucun binaire précompilé ne
@@ -26,7 +26,7 @@ RUN npm ci --omit=dev --no-fund --ignore-scripts \
     && node -e "require('bcrypt'); require('sharp')"
 
 # ── Étape 2 : image finale ───────────────────────────────────────────────────
-FROM node:26.13.0-slim AS runner
+FROM node:26.13.1-slim AS runner
 # Polices pour les PDF (pdfkit). Pas de curl : le HEALTHCHECK utilise fetch de Node.
 #
 # `upgrade` avant l'installation : le job `image` de la CI fait échouer la
