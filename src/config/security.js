@@ -246,13 +246,16 @@ const rapportRateLimitConfig = limite(15, env('RAPPORT_RATE_LIMIT_MAX', 60), 'Tr
  * Inscription en deux temps (§ 5) : un code à 6 chiffres part à l'adresse
  * saisie et le compte n'est créé qu'une fois ce code vérifié.
  *
- * Fermé tant que la variable ne vaut pas `true`, et non l'inverse : les
- * versions de l'application déjà sur les téléphones ne connaissent pas cette
- * étape et n'envoient pas de jeton. Ouvert par défaut, ce déploiement leur
- * refuserait toute inscription. On l'ouvre une fois la nouvelle version
- * publiée, en posant la variable sur le serveur — sans rien redéployer.
+ * Ouvert par défaut : l'application mobile est le seul client de la route
+ * d'inscription et aucune version n'a été publiée, donc personne n'ignore
+ * cette étape. Fermé par défaut, il aurait suffi d'oublier une ligne de .env
+ * pour que le serveur accepte n'importe quelle inscription sans contrôler le
+ * jeton — une vérification éteinte sans que rien ne le signale.
+ *
+ * `INSCRIPTION_VERIFICATION_EMAIL=false` reste le coupe-circuit : l'inscription
+ * redevient directe, sans rien redéployer.
  */
-const verificationEmailInscription = process.env.INSCRIPTION_VERIFICATION_EMAIL === 'true';
+const verificationEmailInscription = process.env.INSCRIPTION_VERIFICATION_EMAIL !== 'false';
 
 module.exports = {
   isProd,

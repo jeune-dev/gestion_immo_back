@@ -1,7 +1,13 @@
 'use strict';
 
+// Étape ouverte pour CE fichier, avant tout `require` qui charge
+// l'application : `security.js` lit la variable une fois, au chargement.
+// setup/env.js l'éteint pour tous les autres fichiers, qui créent un
+// propriétaire sans avoir à traverser l'envoi d'un code.
+process.env.INSCRIPTION_VERIFICATION_EMAIL = 'true';
+
 const {
-  api, MOT_DE_PASSE, telephoneUnique, emailUnique, nouveauProprietaire, compter, fermer, sequelize,
+  api, MOT_DE_PASSE, telephoneUnique, emailUnique, compter, fermer, sequelize,
 } = require('../../../setup/helpers.js');
 const email = require('../../../../infrastructure/email.service.js');
 
@@ -14,12 +20,6 @@ const email = require('../../../../infrastructure/email.service.js');
  * derrière elle, et un compte créé doit porter une adresse qui fonctionne.
  * Le code est intercepté à l'envoi de l'e-mail, seul endroit où il existe en
  * clair — en base il n'y a qu'une empreinte.
- *
- * Ce que l'étape REFUSE quand elle est ouverte (inscription sans jeton, jeton
- * inventé, jeton d'une autre adresse, jeton rejoué) se teste sans base dans
- * unit/services/verificationEmail.test.js : la contrainte y est posée par
- * `INSCRIPTION_VERIFICATION_EMAIL`, que ce fichier-ci ne peut pas changer
- * après le chargement de l'application.
  */
 
 const CODE = '/api/v1/auth/inscription/code';
@@ -41,6 +41,24 @@ async function demanderCode(adresse, prenom) {
   return envoi.mock.calls.at(-1)?.[0]?.code;
 }
 
+/** Adresse vérifiée de bout en bout ; rend le jeton. */
+async function jetonPour(adresse) {
+  const code = await demanderCode(adresse);
+  const verif = await api().post(VERIF).send({ email: adresse, code });
+  expect(verif.status).toBe(200);
+  return verif.body.data.email_token;
+}
+
+const inscrire = (adresse, jeton) => api().post(INSCRIPTION).send({
+  first_name: 'Awa',
+  last_name: 'Diop',
+  phone: telephoneUnique(),
+  email: adresse,
+  password: MOT_DE_PASSE,
+  password_confirmation: MOT_DE_PASSE,
+  ...(jeton === undefined ? {} : { email_token: jeton }),
+});
+
 describe('Inscription : vérification de l’adresse', () => {
   test('parcours complet : code envoyé, adresse vérifiée, compte créé avec le jeton', async () => {
     const adresse = emailUnique('inscription');
@@ -61,22 +79,41 @@ describe('Inscription : vérification de l’adresse', () => {
     // Étape 2 : le code est accepté avec un espace au milieu.
     const verif = await api().post(VERIF).send({ email: adresse, code: `${code.slice(0, 3)} ${code.slice(3)}` });
     expect(verif.status).toBe(200);
-    expect(verif.body.data.email_token).toEqual(expect.any(String));
 
     // Aucun compte tant que l'inscription n'est pas envoyée.
     expect(await compter('users', 'lower(email) = :e', { e: adresse.toLowerCase() })).toBe(0);
 
-    const creation = await api().post(INSCRIPTION).send({
-      first_name: 'Awa',
-      last_name: 'Diop',
-      phone: telephoneUnique(),
-      email: adresse,
-      password: MOT_DE_PASSE,
-      password_confirmation: MOT_DE_PASSE,
-      email_token: verif.body.data.email_token,
-    });
+    const creation = await inscrire(adresse, verif.body.data.email_token);
     expect(creation.status).toBe(201);
     expect(creation.body.data.user.email).toBe(adresse.toLowerCase());
+  });
+
+  test('sans jeton, l’inscription est refusée et aucun compte n’est créé', async () => {
+    const adresse = emailUnique('inscription');
+    const res = await inscrire(adresse);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('EMAIL_NON_VERIFIE');
+    expect(await compter('users', 'lower(email) = :e', { e: adresse.toLowerCase() })).toBe(0);
+  });
+
+  test('un jeton inventé, ou celui d’une autre adresse, est refusé', async () => {
+    const verifiee = emailUnique('inscription');
+    const jeton = await jetonPour(verifiee);
+    const autre = emailUnique('inscription');
+
+    expect((await inscrire(autre, 'pas.un.jeton')).body.code).toBe('EMAIL_NON_VERIFIE');
+    // Le jeton vaut pour l'adresse qu'il a vérifiée, pas pour une autre.
+    expect((await inscrire(autre, jeton)).body.code).toBe('EMAIL_NON_VERIFIE');
+    expect(await compter('users', 'lower(email) = :e', { e: autre.toLowerCase() })).toBe(0);
+  });
+
+  test('un jeton ne crée qu’un seul compte', async () => {
+    const adresse = emailUnique('inscription');
+    const jeton = await jetonPour(adresse);
+    expect((await inscrire(adresse, jeton)).status).toBe(201);
+    // Deuxième passage : l'adresse est prise, et le jeton est consommé.
+    const rejeu = await inscrire(adresse, jeton);
+    expect([400, 409]).toContain(rejeu.status);
   });
 
   test('un code faux est refusé, et chaque essai est compté', async () => {
@@ -103,9 +140,11 @@ describe('Inscription : vérification de l’adresse', () => {
   });
 
   test('une adresse déjà prise n’ouvre pas de vérification', async () => {
-    const p = await nouveauProprietaire();
+    const adresse = emailUnique('inscription');
+    expect((await inscrire(adresse, await jetonPour(adresse))).status).toBe(201);
+
     envoi.mockClear();
-    const res = await api().post(CODE).send({ email: p.identifiants.email });
+    const res = await api().post(CODE).send({ email: adresse });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('COMPTE_EXISTANT');
     // Rien n'est parti : l'adresse d'un tiers ne sert pas de sonnette.

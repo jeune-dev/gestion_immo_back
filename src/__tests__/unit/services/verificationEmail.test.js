@@ -170,25 +170,33 @@ describe('consommation du jeton à l’inscription', () => {
   });
 });
 
-// Le défaut décide du sort des versions déjà installées : elles n'envoient pas
-// de jeton, et une étape ouverte d'office leur refuserait toute inscription.
-// C'est une ligne de configuration, donc facile à rouvrir par mégarde.
-describe('étape fermée tant que la variable ne vaut pas « true »', () => {
-  const sansDrapeau = (valeur) => {
-    let laisseePasser;
+// Une vérification que l'on éteint par mégarde ne se voit pas : l'inscription
+// continue de marcher, simplement plus personne ne contrôle l'adresse. Seul
+// `false`, écrit exactement ainsi, doit ouvrir la porte — ni une variable
+// absente, ni une faute de frappe.
+describe('coupe-circuit : « false » et rien d’autre', () => {
+  /** Le service tel qu'il se charge avec cette valeur de variable. */
+  const avecVariable = (valeur) => {
+    const precedente = process.env.INSCRIPTION_VERIFICATION_EMAIL;
+    let service;
     jest.isolateModules(() => {
       if (valeur === undefined) delete process.env.INSCRIPTION_VERIFICATION_EMAIL;
       else process.env.INSCRIPTION_VERIFICATION_EMAIL = valeur;
-      laisseePasser = require('../../../modules/auth/service/verificationEmail.service.js');
+      service = require('../../../modules/auth/service/verificationEmail.service.js');
     });
-    process.env.INSCRIPTION_VERIFICATION_EMAIL = 'true';
-    return laisseePasser;
+    process.env.INSCRIPTION_VERIFICATION_EMAIL = precedente;
+    return service;
   };
 
-  for (const valeur of [undefined, 'false', '1', 'oui']) {
-    test(`variable ${valeur ?? 'absente'} : l’inscription passe sans jeton`, async () => {
-      await expect(sansDrapeau(valeur).consommerJeton({ email: ADRESSE, jeton: null }))
-        .resolves.toBeUndefined();
+  test('« false » : l’inscription repasse en direct, sans jeton', async () => {
+    await expect(avecVariable('false').consommerJeton({ email: ADRESSE, jeton: null }))
+      .resolves.toBeUndefined();
+  });
+
+  for (const valeur of [undefined, 'true', 'False', '0', 'non']) {
+    test(`variable ${valeur ?? 'absente'} : la vérification reste exigée`, async () => {
+      expect(await erreur(avecVariable(valeur).consommerJeton({ email: ADRESSE, jeton: null })))
+        .toEqual({ statut: 400, code: 'EMAIL_NON_VERIFIE' });
     });
   }
 });

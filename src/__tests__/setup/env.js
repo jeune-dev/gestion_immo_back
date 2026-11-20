@@ -34,6 +34,15 @@ for (const [cle, valeur] of Object.entries({
 })) process.env[cle] = process.env[cle] || valeur;
 // bcrypt à coût réduit : les empreintes restent valides, les tests vont vite.
 process.env.BCRYPT_ROUNDS = process.env.BCRYPT_ROUNDS || '4';
+// Vérification de l'adresse à l'inscription : active en production, éteinte
+// ici. Des dizaines de fichiers créent un propriétaire pour arriver à leur
+// sujet, et leur faire traverser l'envoi d'un code à chaque fois les
+// ralentirait sans rien prouver de plus. Le parcours réel, étape ouverte, est
+// tenu par integration/api/auth/inscription-verification.test.js, qui rallume
+// la variable AVANT de charger l'application — ce fichier s'exécute plus tôt,
+// le test a donc le dernier mot — et par les tests unitaires du service.
+// `||` : une valeur posée dans l'environnement reste prioritaire.
+process.env.INSCRIPTION_VERIFICATION_EMAIL = process.env.INSCRIPTION_VERIFICATION_EMAIL || 'false';
 // Dossier propre à la BASE du worker : deux exécutions Jest simultanées (sur
 // des bases différentes) ne comptent jamais les fichiers l'une de l'autre.
 // globalSetup charge aussi ce fichier, dans le processus PARENT (base modèle) :
