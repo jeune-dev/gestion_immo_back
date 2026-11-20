@@ -13,13 +13,18 @@ const PDFDocument = require('pdfkit');
  * texte, aucune interprétation (pas d'injection possible dans le document).
  */
 
-// Charte Kërimmo (mêmes teintes que l'application mobile).
+// Charte TerangaLoc (mêmes teintes que l'application mobile).
 const COULEURS = {
-  texte: '#1f2937', gris: '#64748b', trait: '#e2e8f0', accent: '#0e56b0', marine: '#0b2a5b', vert: '#2e9e1f', fond: '#f3f7fc',
+  texte: '#1f2937', gris: '#64748b', trait: '#e2e8f0', accent: '#0e56b0', marine: '#0b2545', vert: '#2e9e1f', fond: '#f3f7fc',
 };
 
+// Lu à chaque appel, pas au chargement du module : en production, c'est
+// `APP_NAME` du .env qui décide du nom, et un déploiement qui le change ne
+// doit pas demander de retoucher le code.
+const nomProduit = () => process.env.APP_NAME || 'TerangaLoc';
+
 const HAUT_ENTETE = 100;
-const CHEMIN_LOGO = path.join(__dirname, '../assets/logo_kerimmo.png');
+const CHEMIN_LOGO = path.join(__dirname, '../assets/logo_terangaloc.png');
 // Lu une fois ; sans le fichier, l'en-tête s'affiche simplement sans logo.
 const LOGO = fs.existsSync(CHEMIN_LOGO) ? fs.readFileSync(CHEMIN_LOGO) : null;
 
@@ -34,7 +39,7 @@ function generer(dessiner, meta = {}) {
     const doc = new PDFDocument({
       size: 'A4',
       margins: { top: 50, bottom: 60, left: 50, right: 50 },
-      info: { Title: meta.titre || 'Document', Author: meta.auteur || (process.env.APP_NAME || 'Kërimmo'), Producer: 'pdfkit' },
+      info: { Title: meta.titre || 'Document', Author: meta.auteur || nomProduit(), Producer: 'pdfkit' },
       bufferPages: true,
     });
     const morceaux = [];
@@ -73,8 +78,14 @@ function aides(doc) {
       const droite = doc.page.width - doc.page.margins.right;
       let debut = gauche();
       if (LOGO) {
-        doc.image(LOGO, gauche(), 28, { fit: [116, 60], align: 'left', valign: 'center' });
-        debut = gauche() + 130;
+        // Le picto est carré ; le nom est écrit à côté, en texte, pour rester
+        // net à l'impression (« Teranga » marine, « Loc » vert, comme l'app).
+        doc.image(LOGO, gauche(), 30, { fit: [44, 44] });
+        const xNom = gauche() + 52;
+        doc.font('Helvetica-Bold').fontSize(16).fillColor(COULEURS.marine)
+          .text('Teranga', xNom, 43, { lineBreak: false, continued: true })
+          .fillColor(COULEURS.vert).text('Loc', { lineBreak: false });
+        debut = xNom + doc.widthOfString('TerangaLoc') + 18;
       }
       const largeurTitre = droite - debut;
       doc.font('Helvetica-Bold').fontSize(17);
@@ -192,7 +203,7 @@ function piedsDePage(doc, titre) {
     const y = doc.page.height - 42;
     doc.moveTo(gauche, y).lineTo(gauche + largeur, y).strokeColor(COULEURS.trait).stroke();
     doc.font('Helvetica').fontSize(8).fillColor(COULEURS.gris);
-    doc.text(['Kërimmo', titre].filter(Boolean).join(' · '), gauche, y + 8, { width: largeur - 70, lineBreak: false });
+    doc.text([nomProduit(), titre].filter(Boolean).join(' · '), gauche, y + 8, { width: largeur - 70, lineBreak: false });
     doc.text(`Page ${i + 1} / ${pages.count}`, gauche, y + 8, { width: largeur, align: 'right', lineBreak: false });
     doc.page.margins.bottom = bas;
   }

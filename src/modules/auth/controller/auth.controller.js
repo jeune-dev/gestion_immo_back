@@ -7,6 +7,7 @@ const { UnauthorizedError } = require('../../../errors/AppError.js');
 const AuthService = require('../service/auth.service.js');
 const sessions = require('../service/session.service.js');
 const MfaService = require('../service/mfa.service.js');
+const VerificationEmail = require('../service/verificationEmail.service.js');
 
 /**
  * Client NAVIGATEUR (super admin web) : le refresh token part en cookie
@@ -61,6 +62,18 @@ const lireRefresh = (req) => req.cookies?.refresh_token || req.body?.refresh_tok
 exports.inscription = asyncHandler(async (req, res) => {
   const resultat = await AuthService.inscrireProprietaire(req.body, meta(req));
   return repondreSession(req, res, resultat, 'Compte propriétaire créé', 201);
+});
+
+/** Inscription, étape 1 : un code part à l'adresse saisie. */
+exports.inscriptionCode = asyncHandler(async (req, res) => {
+  const { minutes } = await VerificationEmail.demanderCode(req.body);
+  return ok(res, { expire_dans_minutes: minutes }, 'Code envoyé à votre adresse e-mail.');
+});
+
+/** Inscription, étape 2 : le code est contrôlé et la preuve remise au client. */
+exports.inscriptionVerifierCode = asyncHandler(async (req, res) => {
+  const { jeton } = await VerificationEmail.verifierCode(req.body);
+  return ok(res, { email_token: jeton }, 'Adresse vérifiée.');
 });
 
 exports.connexion = asyncHandler(async (req, res) => {

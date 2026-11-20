@@ -35,7 +35,7 @@ const disjoncteur = new Disjoncteur('resend', {
 });
 
 const EXPEDITEUR = () => process.env.EMAIL_FROM || 'Gestion Immo <no-reply@example.com>';
-const NOM_PRODUIT = () => process.env.APP_NAME || 'Kërimmo';
+const NOM_PRODUIT = () => process.env.APP_NAME || 'TerangaLoc';
 
 function gabarit(titre, corpsHtml) {
   return `<!doctype html><html lang="fr"><body style="font-family:Arial,sans-serif;background:#f5f6f8;padding:24px;color:#1f2937">
@@ -72,6 +72,20 @@ async function envoyerCodeReinitialisation({ email, prenom, code, minutes }) {
   });
 }
 
+async function envoyerCodeInscription({ email, prenom, code, minutes }) {
+  const titre = 'Votre code de vérification';
+  const bonjour = prenom ? `<p>Bonjour ${escapeHtml(prenom)},</p>` : '';
+  return envoyer({
+    a: email,
+    sujet: `${NOM_PRODUIT()} — ${titre}`,
+    html: gabarit(titre, `${bonjour}
+<p>Voici le code qui confirme votre adresse et ouvre votre compte :</p>
+<p style="font-size:28px;font-weight:bold;letter-spacing:6px">${escapeHtml(code)}</p>
+<p>Il expire dans ${minutes} minutes. Si vous n'êtes pas à l'origine de cette inscription, ignorez ce message : aucun compte n'a été créé.</p>`),
+    texte: `Votre code de vérification : ${code} (valable ${minutes} minutes).`,
+  });
+}
+
 async function envoyerInvitationLocataire({ email, prenom, proprietaire, code, lien, jours }) {
   const titre = 'Activez votre espace locataire';
   return envoyer({
@@ -86,4 +100,6 @@ ${lien ? `<p><a href="${escapeHtml(lien)}">Activer mon compte</a></p>` : ''}
   });
 }
 
-module.exports = { envoyer, envoyerCodeReinitialisation, envoyerInvitationLocataire, disjoncteur };
+module.exports = {
+  envoyer, envoyerCodeReinitialisation, envoyerCodeInscription, envoyerInvitationLocataire, disjoncteur,
+};

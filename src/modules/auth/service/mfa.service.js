@@ -31,7 +31,7 @@ const verrouillage = require('./verrouillage.service.js');
 
 const DUREE_JETON_MFA = '5m';
 const NB_CODES_SECOURS = 10;
-const EMETTEUR = () => process.env.APP_NAME || 'Kërimmo';
+const EMETTEUR = () => process.env.APP_NAME || 'TerangaLoc';
 
 // Clé DÉRIVÉE : un jeton « mfa » ne peut jamais être confondu avec un jeton
 // d'accès, même si la vérification du type était oubliée ailleurs.

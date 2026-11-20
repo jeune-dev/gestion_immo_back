@@ -8,6 +8,13 @@ const v = require('../validation/auth.validation.js');
 const { limiteActivation } = require('./limiteActivation.js');
 
 // § 5 — Authentification. Routes publiques, toutes limitées en débit.
+// Inscription en deux temps : le code part à l'adresse (étape 1), il est
+// vérifié (étape 2), et le compte n'est créé qu'ensuite, sur présentation du
+// jeton rendu par l'étape 2. L'envoi est borné par IP ET par adresse visée,
+// comme « mot de passe oublié » : sans cela, l'adresse d'un tiers pourrait
+// être inondée d'e-mails.
+router.post('/inscription/code', motDePasseOublieRateLimit, otpCibleRateLimit, validate(v.inscriptionCodeSchema), ctrl.inscriptionCode);
+router.post('/inscription/verifier-code', authRateLimit, validate(v.inscriptionVerificationSchema), ctrl.inscriptionVerifierCode);
 router.post('/inscription', authRateLimit, validate(v.inscriptionSchema), ctrl.inscription);
 router.post('/connexion', authRateLimit, validate(v.connexionSchema), ctrl.connexion);
 // Seconde étape de la connexion quand la double authentification est active.

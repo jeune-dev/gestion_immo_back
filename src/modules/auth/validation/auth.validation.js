@@ -2,6 +2,23 @@
 
 const { Joi, telephone, email, motDePasse, nom } = require('../../../validations/common.js');
 
+// § 5 — inscription en deux temps. Étape 1 : l'adresse seule, pour recevoir
+// le code. Le prénom n'est là que pour l'e-mail (« Bonjour Awa ») : il est
+// facultatif, l'adresse suffit.
+const inscriptionCodeSchema = Joi.object({
+  email: email.required(),
+  first_name: nom.allow('', null),
+});
+
+// Étape 2 : le code à 6 chiffres, espaces et tirets indifférents.
+const codeInscription = Joi.string().replace(/[\s-]+/g, '').pattern(/^[0-9]{6}$/).required()
+  .messages({ 'string.pattern.base': 'Le code contient 6 chiffres' });
+
+const inscriptionVerificationSchema = Joi.object({
+  email: email.required(),
+  code: codeInscription,
+});
+
 // § 5 — inscription propriétaire : prénom, nom, téléphone, email, mot de passe, confirmation.
 const inscriptionSchema = Joi.object({
   first_name: nom.required(),
@@ -13,6 +30,11 @@ const inscriptionSchema = Joi.object({
     .messages({ 'any.only': 'La confirmation du mot de passe ne correspond pas' }),
   company_name: Joi.string().trim().max(150).allow('', null),
   city: Joi.string().trim().max(100).allow('', null),
+  // Preuve que l'adresse a été vérifiée (étape 2). Exigée par le service
+  // selon `INSCRIPTION_VERIFICATION_EMAIL`, et non ici : une ancienne version
+  // de l'application, qui ne l'envoie pas, doit recevoir un message clair
+  // plutôt qu'une erreur de validation sur un champ qu'elle ne connaît pas.
+  email_token: Joi.string().max(1024).allow('', null),
 });
 
 // § 5 — connexion par téléphone OU email.
@@ -82,5 +104,6 @@ const mfaSchema = Joi.object({
 
 module.exports = {
   inscriptionSchema, connexionSchema, refreshSchema, deconnexionSchema,
+  inscriptionCodeSchema, inscriptionVerificationSchema,
   motDePasseOublieSchema, verificationCodeSchema, reinitialisationSchema, activationSchema, mfaSchema, codeTotp, codeSecours,
 };

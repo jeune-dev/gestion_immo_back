@@ -242,8 +242,21 @@ const televersementRateLimitConfig = limite(15, env('UPLOAD_RATE_LIMIT_MAX', 60)
 // M12 : requêtes lourdes, jusqu'ici seulement bornées par la limite générale).
 const rapportRateLimitConfig = limite(15, env('RAPPORT_RATE_LIMIT_MAX', 60), 'Trop de rapports demandés. Réessayez dans quelques minutes.');
 
+/**
+ * Inscription en deux temps (§ 5) : un code à 6 chiffres part à l'adresse
+ * saisie et le compte n'est créé qu'une fois ce code vérifié.
+ *
+ * Fermé tant que la variable ne vaut pas `true`, et non l'inverse : les
+ * versions de l'application déjà sur les téléphones ne connaissent pas cette
+ * étape et n'envoient pas de jeton. Ouvert par défaut, ce déploiement leur
+ * refuserait toute inscription. On l'ouvre une fois la nouvelle version
+ * publiée, en posant la variable sur le serveur — sans rien redéployer.
+ */
+const verificationEmailInscription = process.env.INSCRIPTION_VERIFICATION_EMAIL === 'true';
+
 module.exports = {
   isProd,
+  verificationEmailInscription,
   jwtConfig,
   cleHmac,
   bcryptConfig,

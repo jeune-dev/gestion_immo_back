@@ -6,7 +6,7 @@ const sequelize = require('../../../config/db.js');
 const {
   User, Owner, OwnerMember, Subscription, SubscriptionPlan, PasswordReset, Tenant, TenantInvitation,
 } = require('../../../models/index.js');
-const { bcryptConfig, validerMotDePasseAdmin } = require('../../../config/security.js');
+const { bcryptConfig, validerMotDePasseAdmin, verificationEmailInscription } = require('../../../config/security.js');
 const bcrypt = require('../../../utils/motDePasse.js');
 const { normaliserTelephone } = require('../../../utils/telephone.js');
 const { aujourdhui, ajouterJours } = require('../../../utils/dates.js');
@@ -14,6 +14,7 @@ const { ConflictError, UnauthorizedError, ForbiddenError, BadRequestError, Valid
 const sessions = require('./session.service.js');
 const invitations = require('./invitation.service.js');
 const mfa = require('./mfa.service.js');
+const verificationEmail = require('./verificationEmail.service.js');
 const verrouillage = require('./verrouillage.service.js');
 const parametres = require('../../parametres/service/parametres.service.js');
 const email = require('../../../infrastructure/email.service.js');
@@ -88,6 +89,10 @@ async function inscrireProprietaire(donnees, meta) {
     );
   }
 
+  // Après le contrôle d'unicité : un numéro déjà pris ne doit pas brûler le
+  // jeton, sinon il faudrait redemander un code pour corriger le téléphone.
+  await verificationEmail.consommerJeton({ email: donnees.email, jeton: donnees.email_token });
+
   const empreinte = await bcrypt.hash(donnees.password, bcryptConfig.saltRounds);
   const essai = await parametres.plateforme('essai');
 
@@ -99,6 +104,9 @@ async function inscrireProprietaire(donnees, meta) {
       email: donnees.email,
       phone: donnees.phone,
       password_hash: empreinte,
+      // L'adresse vient d'être prouvée par le code (verificationEmail) : le
+      // compte naît vérifié, il n'y a pas de second rappel à envoyer.
+      ...(verificationEmailInscription ? { email_verified_at: new Date() } : {}),
     }, { transaction: t });
 
     const owner = await Owner.create({
