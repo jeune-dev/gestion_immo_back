@@ -64,9 +64,17 @@ exports.inscription = asyncHandler(async (req, res) => {
   return repondreSession(req, res, resultat, 'Compte propriétaire créé', 201);
 });
 
-/** Inscription, étape 1 : un code part à l'adresse saisie. */
+/**
+ * Inscription, étape 1 : un code part à l'adresse saisie.
+ *
+ * L'API parle `first_name` comme partout ailleurs, le service parle français :
+ * la correspondance se fait ici, sinon l'e-mail salue un prénom vide.
+ */
 exports.inscriptionCode = asyncHandler(async (req, res) => {
-  const { minutes } = await VerificationEmail.demanderCode(req.body);
+  const { minutes } = await VerificationEmail.demanderCode({
+    email: req.body.email,
+    prenom: req.body.first_name,
+  });
   return ok(res, { expire_dans_minutes: minutes }, 'Code envoyé à votre adresse e-mail.');
 });
 
