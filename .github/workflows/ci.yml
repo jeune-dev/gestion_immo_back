@@ -319,8 +319,16 @@ jobs:
               ln -sf "${DISPO}" "/etc/nginx/sites-enabled/${SITE}"
 
               if nginx -t; then
-                systemctl reload nginx
-                echo "Configuration nginx à jour et rechargée."
+                # `reload-or-restart` et non `reload` : on ne recharge pas un
+                # service arrêté, et `reload` échouait alors sur « nginx.service
+                # is not active » — l'API venait pourtant d'être déployée et de
+                # répondre en loopback. Un déploiement réussi se terminait en
+                # rouge, et le site restait hors ligne faute d'avoir été
+                # démarré. Ici, nginx est relancé s'il dort, rechargé s'il
+                # tourne, et un vrai échec de démarrage fait toujours échouer
+                # l'étape.
+                systemctl reload-or-restart nginx
+                echo "Configuration nginx à jour ; nginx $(systemctl is-active nginx)."
               else
                 echo "ERREUR : nginx -t a échoué avec la nouvelle configuration." >&2
                 if [ -f "${SAUVE}" ]; then
