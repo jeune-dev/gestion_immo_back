@@ -134,7 +134,16 @@ async function verifierCode({ email: adresse, code }) {
  * été vérifiée, et il ne sert qu'une fois. Sans la vérification activée, ne
  * fait rien — une ancienne version de l'application s'inscrit comme avant.
  */
-async function consommerJeton({ email: adresse, jeton }) {
+/**
+ * @param {object} options
+ * @param {string} options.email adresse que le jeton doit couvrir
+ * @param {string} [options.jeton] preuve remise à l'étape 2
+ * @param {import('sequelize').Transaction} [options.transaction] celle qui crée
+ *   le compte. À fournir : sans elle, un échec de création laisserait le jeton
+ *   consommé pour un compte qui n'existe pas, et l'utilisateur devrait tout
+ *   reprendre depuis l'envoi du code.
+ */
+async function consommerJeton({ email: adresse, jeton, transaction }) {
   if (!verificationEmailInscription) return;
 
   const manquant = new BadRequestError(
@@ -156,7 +165,7 @@ async function consommerJeton({ email: adresse, jeton }) {
   const [lignes] = await sequelize.query(
     `UPDATE email_verifications SET used_at = now()
       WHERE id = :id AND used_at IS NULL AND verified_at IS NOT NULL RETURNING id`,
-    { replacements: { id: contenu.vid } }
+    { replacements: { id: contenu.vid }, transaction }
   );
   if (!lignes.length) throw manquant;
 }

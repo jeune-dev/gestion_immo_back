@@ -23,7 +23,10 @@ const inscriptionVerificationSchema = Joi.object({
 const inscriptionSchema = Joi.object({
   first_name: nom.required(),
   last_name: nom.required(),
-  phone: telephone.required(),
+  // Facultatif : l'adresse e-mail suffit à identifier un propriétaire, et
+  // l'App Store refuse qu'on exige une donnée dont le service n'a pas besoin
+  // (règle 5.1.1(v)). Fourni, le numéro reste contrôlé et unique.
+  phone: telephone.allow('', null),
   email: email.required(),
   password: motDePasse.required(),
   password_confirmation: Joi.any().valid(Joi.ref('password')).required()

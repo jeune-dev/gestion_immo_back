@@ -21,6 +21,36 @@ describe('Authentification', () => {
     expect(JSON.stringify(res.body)).not.toMatch(/password_hash|token_version/);
   });
 
+  test('inscription sans téléphone : acceptée, et deux comptes sans numéro cohabitent', async () => {
+    const sansTelephone = (adresse) => api().post('/api/v1/auth/inscription').send({
+      first_name: 'Awa', last_name: 'Diop', email: adresse, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
+    });
+
+    const premier = await sansTelephone(emailUnique('sanstel'));
+    expect(premier.status).toBe(201);
+    expect(premier.body.data.user.phone).toBeNull();
+
+    // Le contrôle d'unicité ne doit pas chercher « phone IS NULL » : sinon le
+    // premier compte sans numéro ferait refuser tous les suivants.
+    const second = await sansTelephone(emailUnique('sanstel'));
+    expect(second.status).toBe(201);
+
+    // La connexion par e-mail fonctionne sans numéro.
+    const connexion = await api().post('/api/v1/auth/connexion')
+      .send({ identifiant: premier.body.data.user.email, password: MOT_DE_PASSE });
+    expect(connexion.status).toBe(200);
+  });
+
+  test('inscription : un téléphone fourni reste unique', async () => {
+    const p = await nouveauProprietaire();
+    const doublon = await api().post('/api/v1/auth/inscription').send({
+      first_name: 'Awa', last_name: 'Diop', phone: p.identifiants.phone, email: emailUnique('doublon'),
+      password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
+    });
+    expect(doublon.status).toBe(409);
+    expect(doublon.body.message).toMatch(/téléphone/i);
+  });
+
   test('inscription : confirmation différente et e-mail déjà pris refusés', async () => {
     const corps = {
       first_name: 'A', last_name: 'B', phone: telephoneUnique(), email: emailUnique(), password: MOT_DE_PASSE, password_confirmation: 'Autre1234',

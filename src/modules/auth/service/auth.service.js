@@ -78,31 +78,48 @@ function critereIdentifiant(identifiant) {
  * appartenance et abonnement d'essai (§ 31) dans UNE transaction.
  */
 async function inscrireProprietaire(donnees, meta) {
+  // Le téléphone est facultatif. La clause ne doit donc être posée que s'il y
+  // en a un : `{ phone: undefined }` deviendrait `phone IS NULL` et le premier
+  // compte sans numéro ferait refuser tous les suivants.
+  const telephone = donnees.phone || null;
+  const identifiants = [sequelize.where(sequelize.fn('lower', sequelize.col('email')), donnees.email)];
+  if (telephone) identifiants.push({ phone: telephone });
+
   const existe = await User.findOne({
-    where: { [Op.or]: [sequelize.where(sequelize.fn('lower', sequelize.col('email')), donnees.email), { phone: donnees.phone }] },
+    where: { [Op.or]: identifiants },
     attributes: ['id', 'email', 'phone'],
   });
   if (existe) {
     throw new ConflictError(
-      existe.phone === donnees.phone ? 'Ce numéro de téléphone est déjà utilisé' : 'Cet e-mail est déjà utilisé',
+      telephone && existe.phone === telephone ? 'Ce numéro de téléphone est déjà utilisé' : 'Cet e-mail est déjà utilisé',
       'COMPTE_EXISTANT'
     );
   }
-
-  // Après le contrôle d'unicité : un numéro déjà pris ne doit pas brûler le
-  // jeton, sinon il faudrait redemander un code pour corriger le téléphone.
-  await verificationEmail.consommerJeton({ email: donnees.email, jeton: donnees.email_token });
 
   const empreinte = await bcrypt.hash(donnees.password, bcryptConfig.saltRounds);
   const essai = await parametres.plateforme('essai');
 
   return sequelize.transaction(async (t) => {
+    // DANS la transaction : si la création échoue ensuite, la consommation est
+    // annulée avec elle. Consommé en dehors, le jeton restait brûlé pour un
+    // compte qui n'existait pas — l'utilisateur se retrouvait bloqué à la
+    // dernière étape, avec « Adresse e-mail non vérifiée », et devait tout
+    // reprendre depuis l'envoi du code.
+    //
+    // Après le contrôle d'unicité, qui est hors transaction : un numéro déjà
+    // pris ne doit pas brûler le jeton non plus.
+    await verificationEmail.consommerJeton({
+      email: donnees.email,
+      jeton: donnees.email_token,
+      transaction: t,
+    });
+
     const user = await User.create({
       role_code: 'proprietaire',
       first_name: donnees.first_name,
       last_name: donnees.last_name,
       email: donnees.email,
-      phone: donnees.phone,
+      phone: telephone,
       password_hash: empreinte,
       // L'adresse vient d'être prouvée par le code (verificationEmail) : le
       // compte naît vérifié, il n'y a pas de second rappel à envoyer.
@@ -113,7 +130,7 @@ async function inscrireProprietaire(donnees, meta) {
       user_id: user.id,
       display_name: `${donnees.first_name} ${donnees.last_name}`,
       company_name: donnees.company_name || null,
-      phone: donnees.phone,
+      phone: telephone,
       email: donnees.email,
       city: donnees.city || null,
     }, { transaction: t });

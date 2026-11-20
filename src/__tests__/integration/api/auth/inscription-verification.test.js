@@ -10,6 +10,7 @@ const {
   api, MOT_DE_PASSE, telephoneUnique, emailUnique, compter, fermer, sequelize,
 } = require('../../../setup/helpers.js');
 const email = require('../../../../infrastructure/email.service.js');
+const { Owner } = require('../../../../models/index.js');
 
 /**
  * § 5 — vérification de l'adresse AVANT la création du compte : un code à
@@ -114,6 +115,26 @@ describe('Inscription : vérification de l’adresse', () => {
     // Deuxième passage : l'adresse est prise, et le jeton est consommé.
     const rejeu = await inscrire(adresse, jeton);
     expect([400, 409]).toContain(rejeu.status);
+  });
+
+  test('une création qui échoue ne brûle pas le jeton', async () => {
+    const adresse = emailUnique('inscription');
+    const jeton = await jetonPour(adresse);
+
+    // Une panne APRÈS la consommation du jeton, en pleine transaction. Peu
+    // importe laquelle — contrainte, coupure, bogue : ce qui compte est que
+    // l'espace propriétaire ne se crée pas alors que le jeton vient d'être pris.
+    const panne = jest.spyOn(Owner, 'create').mockRejectedValueOnce(new Error('panne simulée'));
+    const echec = await inscrire(adresse, jeton);
+    panne.mockRestore();
+
+    expect(echec.status).toBeGreaterThanOrEqual(500);
+    expect(await compter('users', 'lower(email) = :e', { e: adresse.toLowerCase() })).toBe(0);
+
+    // Le jeton doit avoir survécu : sinon l'utilisateur, resté sur la dernière
+    // étape avec toute sa saisie, devrait tout reprendre depuis l'envoi du code.
+    const reprise = await inscrire(adresse, jeton);
+    expect(reprise.status).toBe(201);
   });
 
   test('un code faux est refusé, et chaque essai est compté', async () => {

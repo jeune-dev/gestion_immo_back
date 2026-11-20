@@ -72,7 +72,6 @@ describe('Auth — inscription', () => {
   test.each([
     ['prénom manquant', { first_name: undefined }],
     ['nom manquant', { last_name: undefined }],
-    ['téléphone manquant', { phone: undefined }],
     ['e-mail manquant', { email: undefined }],
     ['mot de passe manquant', { password: undefined }],
     ['confirmation manquante', { password_confirmation: undefined }],
@@ -101,10 +100,24 @@ describe('Auth — inscription', () => {
     expect(await compter('users')).toBe(avant);
   });
 
+  // Prénom, nom, e-mail, mot de passe, confirmation. Le téléphone n'en est
+  // plus : l'adresse suffit à identifier un propriétaire.
   test('corps vide : 422 listant tous les champs obligatoires', async () => {
     const res = await api().post(INSCRIPTION).send({});
     expect(res.status).toBe(422);
-    expect(res.body.error.details.length).toBeGreaterThanOrEqual(6);
+    const champs = res.body.error.details.map((d) => d.champ ?? d.field ?? d.path ?? JSON.stringify(d)).join(' ');
+    expect(res.body.error.details.length).toBeGreaterThanOrEqual(5);
+    expect(champs).not.toMatch(/phone/);
+  });
+
+  test('téléphone absent ou vide : accepté, le compte naît sans numéro', async () => {
+    for (const surcharge of [{ phone: undefined }, { phone: '' }]) {
+      const corps = corpsInscription(surcharge);
+      if (surcharge.phone === undefined) delete corps.phone;
+      const res = await api().post(INSCRIPTION).send(corps);
+      expect(res.status).toBe(201);
+      expect(res.body.data.user.phone).toBeNull();
+    }
   });
 
   test('JSON malformé : 400 JSON_INVALIDE', async () => {
