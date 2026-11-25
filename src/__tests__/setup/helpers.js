@@ -12,6 +12,19 @@ const sequelize = require('../../config/db.js');
 const bcrypt = require('../../utils/motDePasse.js');
 const totp = require('../../utils/totp.js');
 const { encrypt } = require('../../utils/cryptoField.js');
+const whatsapp = require('../../infrastructure/whatsapp.service.js');
+
+/**
+ * Codes envoyés « par WhatsApp » (invitation locataire — constat E2) :
+ * capturés ici au lieu de partir chez Meta. Un test lit le dernier code reçu
+ * par un numéro comme le ferait son titulaire.
+ */
+const codesWhatsapp = new Map();
+whatsapp.envoyerCode = async ({ telephone, code }) => {
+  codesWhatsapp.set(telephone, String(code));
+  return { id: null, simule: true };
+};
+const dernierCodeWhatsapp = (telephone) => codesWhatsapp.get(telephone) || null;
 const arrierePlan = require('../../utils/arrierePlan.js');
 const {
   aujourdhui, ajouterJours, ajouterMois, avecJour, debutMois, finMois, libelleMois,
@@ -103,10 +116,22 @@ const api = () => {
     const test = post(url);
     return ROUTES_IDEMPOTENCE_OBLIGATOIRE.test(String(url).split('?')[0]) ? test.set('Idempotency-Key', crypto.randomUUID()) : test;
   };
+  // M1 : la configuration d'un moyen de paiement exige le mot de passe actuel.
+  // Comme un client qui le redemande, `api()` le joint (s'il manque) ; le refus
+  // lui-même est vérifié avec `apiBrute()`.
+  const put = agent.put.bind(agent);
+  agent.put = (url) => {
+    const test = put(url);
+    if (String(url).split('?')[0] !== '/api/v1/paiements/moyens') return test;
+    const send = test.send.bind(test);
+    test.send = (corps) => send(corps && typeof corps === 'object' && !('current_password' in corps) ? { current_password: MOT_DE_PASSE, ...corps } : corps);
+    return test;
+  };
   return agent;
 };
 const apiBrute = () => request(cible());
-const MOT_DE_PASSE = 'MotDePasse1';
+// M3 : 10 caractères minimum, sans motif courant (« motdepasse »…).
+const MOT_DE_PASSE = 'Baobab2024Ndar';
 
 /**
  * Téléphone sénégalais UNIQUE dans la base du worker.
@@ -238,7 +263,7 @@ async function activerLocataire(proprio, tenant) {
   const inv = await api().post(`/api/v1/locataires/${tenant.id}/invitation`).set(proprio.h).send({});
   if (inv.status !== 201) throw new Error(`Invitation : ${inv.status} ${JSON.stringify(inv.body)}`);
   const res = await api().post('/api/v1/auth/locataire/activation').send({
-    code: inv.body.data.invitation.code, phone: tenant.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
+    code: dernierCodeWhatsapp(tenant.phone), phone: tenant.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
   });
   if (res.status !== 201) throw new Error(`Activation locataire : ${res.status} ${JSON.stringify(res.body)}`);
   return { token: res.body.data.access_token, h: bearer(res.body.data.access_token), user: res.body.data.user };
@@ -304,6 +329,7 @@ async function fermer() {
 }
 
 module.exports = {
+  dernierCodeWhatsapp,
   api, apiBrute, bearer, MOT_DE_PASSE, telephoneUnique, emailUnique,
   nouveauProprietaire, superAdmin, codeTotp, creerImmeuble, creerAppartement, creerLocataire,
   desactiverEdlObligatoire, bailActif, activerLocataire, fermer, sequelize, reperes, bailRelatif,

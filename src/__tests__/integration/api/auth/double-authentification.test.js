@@ -156,7 +156,7 @@ describe('Super admin : double authentification obligatoire', () => {
       expect((await api().post('/api/v1/auth/verifier-code').send({ identifiant: admin.email, code })).status).toBe(200);
       // Politique renforcée du super admin : mot de passe simple refusé, code conservé.
       const faible = await api().post('/api/v1/auth/reinitialiser-mot-de-passe')
-        .send({ identifiant: admin.email, code, password: 'Password123', password_confirmation: 'Password123' });
+        .send({ identifiant: admin.email, code, password: 'Baobab2024Xyz', password_confirmation: 'Baobab2024Xyz' });
       expect(faible.status).toBe(422);
       expect(faible.body.error.code).toBe('MOT_DE_PASSE_TROP_FAIBLE');
       const res = await api().post('/api/v1/auth/reinitialiser-mot-de-passe')
@@ -181,7 +181,7 @@ describe('Super admin : double authentification obligatoire', () => {
     const admin = await superAdmin();
     const changer = (password) => api().post(`${COMPTE}/mot-de-passe`).set(admin.h)
       .send({ current_password: MOT_DE_PASSE, password, password_confirmation: password });
-    const faible = await changer('Password123');
+    const faible = await changer('Baobab2024Xyz');
     expect(faible.status).toBe(422);
     expect(faible.body.error.code).toBe('MOT_DE_PASSE_TROP_FAIBLE');
     const identique = await changer(MOT_DE_PASSE);

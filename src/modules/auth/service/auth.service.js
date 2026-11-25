@@ -21,6 +21,7 @@ const email = require('../../../infrastructure/email.service.js');
 const { journaliser } = require('../../audit/service/audit.service.js');
 const logger = require('../../../utils/logger.js');
 const { comparerTempsConstant } = require('../../../infrastructure/paiement/signature.js');
+const { secretOtp } = require('../../../utils/otp.js');
 
 // Empreinte bcrypt factice (même coût que les vraies) : égalise le temps de
 // réponse quand le compte n'existe pas (anti-énumération par chronométrage,
@@ -90,8 +91,10 @@ async function inscrireProprietaire(donnees, meta) {
     attributes: ['id', 'email', 'phone'],
   });
   if (existe) {
+    // Constat F1 : message UNIQUE, qu'il s'agisse du téléphone ou de l'e-mail
+    // (ne confirme pas qu'un numéro donné a un compte).
     throw new ConflictError(
-      telephone && existe.phone === telephone ? 'Ce numéro de téléphone est déjà utilisé' : 'Cet e-mail est déjà utilisé',
+      'Impossible de créer un compte avec ces informations. Si vous avez déjà un compte, connectez-vous ou utilisez « mot de passe oublié ».',
       'COMPTE_EXISTANT'
     );
   }
@@ -210,7 +213,7 @@ async function connecter({ identifiant, password }, meta) {
  */
 const ALPHABET_CODE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const genererCode = () => Array.from({ length: 8 }, () => ALPHABET_CODE[crypto.randomInt(ALPHABET_CODE.length)]).join('');
-const empreinteCode = (userId, code) => crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${userId}:${code}`).digest('hex');
+const empreinteCode = (userId, code) => crypto.createHmac('sha256', secretOtp()).update(`${userId}:${code}`).digest('hex');
 
 /**
  * Mot de passe oublié (§ 5), étape 1 : code envoyé par e-mail, valable la
@@ -375,15 +378,18 @@ async function activerAvecInvitation(invitationId, { token, password }, meta, re
       }
       if (user.status !== 'actif') throw new ForbiddenError('Votre compte est désactivé. Contactez le support.', 'COMPTE_INACTIF');
     } else {
-      const emailLibre = tenant.email
-        ? !(await User.findOne({ where: sequelize.where(sequelize.fn('lower', sequelize.col('email')), tenant.email.toLowerCase()), transaction: t }))
-        : false;
+      // Constat E2 de l'audit : l'e-mail de la fiche locataire est saisi par
+      // le BAILLEUR, jamais vérifié — il n'est plus recopié dans le compte
+      // (il servirait à « mot de passe oublié » : prise de contrôle possible).
+      // Le téléphone, lui, est prouvé : le code d'activation n'est envoyé que
+      // sur le WhatsApp de ce numéro.
       user = await User.create({
         role_code: 'locataire',
         first_name: tenant.first_name,
         last_name: tenant.last_name,
         phone: tenant.phone,
-        email: emailLibre ? tenant.email : null,
+        email: null,
+        phone_verified_at: new Date(),
         password_hash: await bcrypt.hash(password, bcryptConfig.saltRounds),
       }, { transaction: t });
     }

@@ -141,6 +141,26 @@ async function exigerMotDePasse(user, motDePasse) {
   }
 }
 
+/**
+ * Ré-authentification avant une opération sensible (constat M1 : moyens de
+ * paiement). Une session volée ne suffit plus : mot de passe actuel, plus le
+ * code de double authentification si elle est active.
+ */
+async function exigerReauthentification(acteurId, { current_password: motDePasse, code, code_secours: codeSecours } = {}) {
+  const user = await User.findByPk(acteurId);
+  await exigerMotDePasse(user, motDePasse);
+  if (mfaActive(user)) {
+    if (!code && !codeSecours) {
+      throw new UnauthorizedError('Saisissez le code de votre application d’authentification', 'CODE_MFA_REQUIS');
+    }
+    if (!(await verifierSecondFacteur(user, { code, code_secours: codeSecours }))) {
+      await compterEchec(user);
+      throw new UnauthorizedError('Code de vérification invalide', 'CODE_MFA_INVALIDE');
+    }
+  }
+  return user;
+}
+
 /** Étape 1 de la configuration : nouveau secret (non actif tant qu'il n'est pas confirmé). */
 async function initialiser(acteur, { current_password: motDePasse }) {
   const user = await User.findByPk(acteur.id);
@@ -214,5 +234,5 @@ async function regenererCodesSecours(acteur, { current_password: motDePasse, cod
 
 module.exports = {
   emettreJetonMfa, lireJetonMfa, finaliserConnexion, initialiser, activer, desactiver, regenererCodesSecours,
-  verifierSecondFacteur, mfaActive, estSuperAdmin, compterEchec, DUREE_JETON_MFA,
+  verifierSecondFacteur, mfaActive, estSuperAdmin, compterEchec, DUREE_JETON_MFA, exigerReauthentification,
 };

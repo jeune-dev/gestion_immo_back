@@ -9,6 +9,22 @@ const { jwtConfig, cleHmac } = require('../../../config/security.js');
 const hashToken = require('../../../utils/hashToken.js');
 const { alerter, TYPES } = require('../../../infrastructure/alertes.service.js');
 const logger = require('../../../utils/logger.js');
+const cache = require('../../../utils/cache.js');
+
+/**
+ * Constat F4 de l'audit : révoquer UNE session (déconnexion, « déconnecter cet
+ * appareil ») invalidait son refresh token, mais son jeton d'accès restait
+ * valable jusqu'à 15 minutes. Le `sid` révoqué est désormais inscrit dans le
+ * cache partagé (Redis) le temps de vie maximal d'un jeton d'accès ; le
+ * middleware d'authentification le refuse.
+ */
+const DUREE_LISTE_REVOCATION_S = 16 * 60;
+const cleRevocation = (sid) => `session_revoquee:${sid}`;
+const marquerSidRevoque = (empreinte) => (empreinte ? cache.ecrire(cleRevocation(String(empreinte).slice(0, 32)), 1, DUREE_LISTE_REVOCATION_S) : null);
+async function sidRevoque(sid) {
+  if (typeof sid !== 'string' || !/^[0-9a-f]{32}$/.test(sid)) return false;
+  return Boolean(await cache.lire(cleRevocation(sid)));
+}
 
 /**
  * Sessions (§ 5 « gestion de session », § 32 « tokens d'accès courts, refresh
@@ -238,7 +254,9 @@ async function rafraichir(refreshToken, meta = {}) {
 /** Ferme la session portée par ce refresh token (déconnexion). */
 async function fermerSession(refreshToken) {
   if (!refreshToken) return;
-  await RefreshToken.update({ revoked_at: new Date(), revoked_reason: 'deconnexion' }, { where: { token_hash: hashToken(refreshToken), revoked_at: null } });
+  const empreinte = hashToken(refreshToken);
+  await RefreshToken.update({ revoked_at: new Date(), revoked_reason: 'deconnexion' }, { where: { token_hash: empreinte, revoked_at: null } });
+  await marquerSidRevoque(empreinte);
 }
 
 /**
@@ -278,13 +296,14 @@ async function lister(userId, refreshTokenCourant = null, sessionIdCourant = nul
 
 /** Déconnexion distante d'UNE session (§ 32). */
 async function revoquerSession(userId, sessionId) {
-  const [n] = await RefreshToken.update(
+  const [n, lignes] = await RefreshToken.update(
     { revoked_at: new Date(), revoked_reason: 'distante' },
-    { where: { id: sessionId, user_id: userId, revoked_at: null } }
+    { where: { id: sessionId, user_id: userId, revoked_at: null }, returning: ['token_hash'] }
   );
+  if (n > 0) await marquerSidRevoque(lignes?.[0]?.token_hash);
   return n > 0;
 }
 
 module.exports = {
-  genererAccessToken, ouvrirSession, rafraichir, fermerSession, revoquerToutesLesSessions, lister, revoquerSession,
+  genererAccessToken, ouvrirSession, rafraichir, fermerSession, revoquerToutesLesSessions, lister, revoquerSession, sidRevoque,
 };

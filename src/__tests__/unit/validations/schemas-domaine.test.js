@@ -17,10 +17,10 @@ const admin = require('../../../modules/admin/validation/admin.validation.js');
 
 const OPTIONS = { abortEarly: false, stripUnknown: true, convert: true };
 const valider = (schema, valeur) => schema.validate(valeur, OPTIONS);
-const MDP = 'MotDePasse1';
+const MDP = 'Baobab2024Ndar';
 
 describe('auth.validation', () => {
-  const inscription = { first_name: 'Awa', last_name: 'Fall', phone: '77 123 45 67', email: 'AWA@TEST.SN', password: MDP, password_confirmation: MDP };
+  const inscription = { first_name: 'Awa', last_name: 'Fall', phone: '77 123 45 67', email: 'AWA@TEST.SN', password: MDP, password_confirmation: MDP, code: '123456' };
 
   test('inscription : normalisation et retrait des champs inconnus (role_code, status, owner_id)', () => {
     const { error, value } = valider(auth.inscriptionSchema, { ...inscription, role_code: 'super_admin', status: 'inactif', owner_id: 'x' });

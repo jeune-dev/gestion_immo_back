@@ -136,3 +136,35 @@ Corrigé en chemin : une course réelle dans le middleware d'idempotence (clé d
 - Clés `age` des sauvegardes (clé privée hors serveur), destination `rclone`, crontab (voir `docs/EXPLOITATION.md`).
 - Copier le bloc nginx, certificats (`certbot certonly`).
 - Conformité CDP (loi 2008-12) : déclaration, registre des traitements, politique de conservation — non traitée par le code (constat M8 de l'audit, hors des 10 points).
+
+---
+
+# Audit de sécurité de novembre 2026 — correctifs
+
+Audit en lecture seule (OWASP Top 10, OWASP LLM, NIST CSF, ISO 27001, CIS) : 75/100, deux points bloquants. Correctifs intégrés le 2026-11-25 sur la base de `main` (vérification de l'adresse e-mail à l'inscription, verrouillage progressif et mises à jour de dépendances déjà présents).
+
+| Constat | Correctif | Tests |
+|---|---|---|
+| **E1** dépendances vulnérables | déjà traité sur `main` (`npm audit --omit=dev` : 0) | CI `npm audit` |
+| **E2** inscription sans preuve ; code d'invitation remis au bailleur ; e-mail saisi par le bailleur recopié dans le compte locataire | inscription : vérification de l'adresse e-mail (déjà sur `main`) ; invitation envoyée au SEUL WhatsApp du locataire (la réponse au bailleur ne contient plus ni code ni lien) ; e-mail du bailleur plus jamais recopié ; `users.phone_verified_at` posé à l'activation | `securite/correctifs-audit-2026-11.test.js`, `activation-locataire`, `locataires`, `courses`, e2e |
+| **M1** moyen de paiement modifiable avec une simple session | `PUT /paiements/moyens` exige `current_password` (+ code 2FA si active) | `securite/…` |
+| **M2** pas d'en-têtes de sécurité sur les fronts | `deploy/nginx.conf` des trois fronts (CSP, HSTS, nosniff, frame-ancestors…) | — |
+| **M3** mots de passe de 8 caractères | 10 caractères minimum + motifs courants refusés (nouveaux mots de passe seulement) | `unit/validations/common.test.js` |
+| **M4** ni suppression de compte ni durée de conservation | `POST /compte/suppression` (anonymisation, photo de profil comprise) ; tâche `retention` (pièces d'identité 12 mois après le dernier bail) ; purge des codes d'inscription ; `docs/RETENTION.md` | `securite/…`, `jobs` |
+| **M5** clé d'hôte SSH non épinglée en CI | `fingerprint: ${{ secrets.VPS_FINGERPRINT }}` | — |
+| **F1** inscription : message révélant si l'e-mail ou le téléphone existe | message unique | `inscription-connexion`, `auth` |
+| **F2** codes OTP signés avec `JWT_SECRET` | secret dédié `OTP_SECRET` (mot de passe oublié et vérification d'adresse ; obligatoire en production, distinct) | `unit/config` |
+| **F3** liens signés valables 1 h | 5 min par défaut, 15 min maximum | — |
+| **F4** jeton d'accès d'une session révoquée valable 15 min | `sid` révoqué inscrit dans Redis, refusé par le middleware | `securite/…`, `compte` |
+| **F5** verrouillage exploitable pour bloquer un tiers | atténué sur `main` par le verrouillage progressif (1, 5, 15 min) ; pas de changement supplémentaire | — |
+| **F8** limite globale par IP trop basse (CGNAT) | 3 000 / 15 min | — |
+| Configuration `MFA_DESACTIVEE_DEV` | avertissement au démarrage en production (ignoré) | — |
+| Procédure d'incident absente | `docs/INCIDENT.md` | — |
+
+Non traités ici, sur décision : CAPTCHA (M6, plus tard) ; épinglage de certificat dans l'application mobile (F7 — risque opérationnel au renouvellement Let's Encrypt).
+
+## Reste à faire côté exploitation
+
+- `.env` de production : **`OTP_SECRET`** (`npm run secrets:generer`) — sans lui, l'API refuse de démarrer.
+- WhatsApp : `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_TEMPLATE_CODE`, et un modèle Meta de catégorie **Authentication** (bouton « Copier le code »). Sans lui, les invitations locataire sont créées mais signalées « non envoyées ».
+- GitHub : secret `VPS_FINGERPRINT` (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` sur le VPS).

@@ -14,6 +14,7 @@ const etatsDesLieux = require('../modules/etatDesLieux/service/etatDesLieux.serv
 const abonnements = require('../modules/abonnement/service/abonnement.service.js');
 const quittances = require('../modules/quittance/service/quittance.service.js');
 const { nettoyer } = require('./nettoyage.js');
+const { purgerPiecesIdentite } = require('./retention.js');
 
 /**
  * Tâches planifiées — démarrées par le seul worker leader (server.js),
@@ -50,6 +51,8 @@ const TACHES = [
   { nom: 'quittances_manquantes', planification: '*/10 * * * *', fn: () => quittances.produireDocumentsManquants() },
   // Données techniques échues.
   { nom: 'nettoyage', planification: '30 3 * * *', fn: () => nettoyer() },
+  // M4 — durées de conservation : pièces d'identité 12 mois après le dernier bail.
+  { nom: 'retention', planification: '45 3 * * *', fn: () => purgerPiecesIdentite() },
 ];
 
 function demarrerJobs() {

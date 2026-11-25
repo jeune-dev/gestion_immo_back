@@ -4,15 +4,19 @@ const asyncHandler = require('../../../middlewares/asyncHandler.js');
 const { ok, created, paginated } = require('../../../utils/response.js');
 const S = require('../service/locataire.service.js');
 
-/** Invitation renvoyée au propriétaire : le code, le lien et l'échéance (jamais l'empreinte). */
-const formatInvitation = (inv, canal) => inv && ({ code: inv.code, token: inv.token, expires_at: inv.expiresAt, canal });
+/**
+ * Invitation renvoyée au propriétaire : l'échéance et le canal SEULEMENT.
+ * Le code et le lien ne lui sont plus communiqués (constat E2) : ils partent
+ * sur le WhatsApp du locataire, seule preuve qu'il possède ce numéro.
+ */
+const formatInvitation = (inv, canal) => inv && ({ expires_at: inv.expiresAt, canal });
 
 exports.lister = asyncHandler(async (req, res) => paginated(res, await S.lister(req.ownerId, req.query, req.pagination), req.pagination));
 exports.fiche = asyncHandler(async (req, res) => ok(res, { tenant: await S.fiche(req.params.id, req.ownerId) }));
 
 exports.creer = asyncHandler(async (req, res) => {
-  const { tenant, invitation } = await S.creer(req.ownerId, req.user, req.body);
-  return created(res, { tenant, invitation: formatInvitation(invitation, tenant.email ? 'email' : 'manuel') }, 'Locataire enregistré');
+  const { tenant, invitation, canal } = await S.creer(req.ownerId, req.user, req.body);
+  return created(res, { tenant, invitation: formatInvitation(invitation, canal) }, 'Locataire enregistré');
 });
 
 exports.modifier = asyncHandler(async (req, res) => ok(res, { tenant: await S.modifier(req.params.id, req.ownerId, req.body) }, 'Locataire modifié'));

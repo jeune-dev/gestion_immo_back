@@ -8,6 +8,7 @@ const { cookieRefresh } = require('../../../config/security.js');
 const CompteService = require('../service/compte.service.js');
 const sessions = require('../../auth/service/session.service.js');
 const MfaService = require('../../auth/service/mfa.service.js');
+const SuppressionService = require('../service/suppression.service.js');
 
 const meta = (req) => ({ ip: req.ip, userAgent: req.headers['user-agent'] });
 
@@ -100,4 +101,10 @@ exports.enregistrerAppareil = asyncHandler(async (req, res) => {
 exports.supprimerAppareil = asyncHandler(async (req, res) => {
   await CompteService.supprimerAppareil(req.user, req.body);
   return ok(res, null, 'Appareil retiré');
+});
+
+exports.supprimerCompte = asyncHandler(async (req, res) => {
+  await SuppressionService.supprimerCompte(req.user, req.body);
+  res.clearCookie('refresh_token', cookieRefresh);
+  return ok(res, null, 'Votre compte a été supprimé. Vos données personnelles ont été anonymisées.');
 });

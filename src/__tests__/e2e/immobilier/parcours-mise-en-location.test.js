@@ -5,7 +5,7 @@ require('../../setup/dateDuJour.js');
 
 const {
   api, bearer, MOT_DE_PASSE, telephoneUnique, emailUnique, pngTest, publierModeleBail, compter, fermer, sequelize,
-  reperes,
+  reperes, dernierCodeWhatsapp,
 } = require('../../setup/helpers.js');
 
 /**
@@ -53,17 +53,19 @@ describe('E2E — mise en location complète', () => {
     const detailImmeuble = (await api().get(`/api/v1/immeubles/${immeuble.id}`).set(h)).body.data.building;
     expect(detailImmeuble).toMatchObject({ apartments_count: 3, available_count: 3, occupied_count: 0 });
 
-    // 3. Locataire + invitation (option A) ; le code est rendu au propriétaire.
+    // 3. Locataire + invitation (option A) ; le code part sur le WhatsApp du locataire (E2), jamais au propriétaire.
     const locataire = (await api().post('/api/v1/locataires').set(h).send({
       first_name: 'Mamadou', last_name: 'Ndiaye', phone: telephoneUnique(), id_document_type: 'cni', id_document_number: '1 234 567 890 12', send_invitation: true,
     })).body.data;
-    expect(locataire.invitation.code).toMatch(/^\d{8}$/);
+    expect(locataire.invitation).toEqual({ expires_at: expect.any(String), canal: 'whatsapp' });
+    const codeLocataire = dernierCodeWhatsapp(locataire.tenant.phone);
+    expect(codeLocataire).toMatch(/^\d{8}$/);
     const [[chiffre]] = await sequelize.query('SELECT id_document_number FROM tenants WHERE id = :id', { replacements: { id: locataire.tenant.id } });
     expect(chiffre.id_document_number).toMatch(/^v1:/); // pièce d'identité chiffrée au repos (§ 32)
 
     // 4. Activation du compte locataire (option B, code + téléphone).
     const activation = await api().post('/api/v1/auth/locataire/activation').send({
-      code: locataire.invitation.code, phone: locataire.tenant.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
+      code: codeLocataire, phone: locataire.tenant.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
     });
     expect(activation.status).toBe(201);
     const hl = bearer(activation.body.data.access_token);
@@ -151,9 +153,9 @@ describe('E2E — mise en location complète', () => {
     const loc = (await api().post('/api/v1/locataires').set(h).send({ first_name: 'X', last_name: 'Y', phone: telephoneUnique(), send_invitation: true })).body.data;
     const activer = (corps) => api().post('/api/v1/auth/locataire/activation').send({ password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE, ...corps });
     expect((await activer({ code: '00000000', phone: loc.tenant.phone })).status).toBe(400);
-    expect((await activer({ code: loc.invitation.code, phone: telephoneUnique() })).status).toBe(400);
-    expect((await activer({ code: loc.invitation.code, phone: loc.tenant.phone })).status).toBe(201);
-    expect((await activer({ code: loc.invitation.code, phone: loc.tenant.phone })).status).toBe(400);
+    expect((await activer({ code: dernierCodeWhatsapp(loc.tenant.phone), phone: telephoneUnique() })).status).toBe(400);
+    expect((await activer({ code: dernierCodeWhatsapp(loc.tenant.phone), phone: loc.tenant.phone })).status).toBe(201);
+    expect((await activer({ code: dernierCodeWhatsapp(loc.tenant.phone), phone: loc.tenant.phone })).status).toBe(400);
 
     // Bail sur un appartement inexistant, dates incohérentes.
     const im = (await api().post('/api/v1/immeubles').set(h).send({ name: 'I', address: 'x', city: 'Dakar' })).body.data.building;

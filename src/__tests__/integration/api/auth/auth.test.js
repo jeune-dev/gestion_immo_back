@@ -48,7 +48,9 @@ describe('Authentification', () => {
       password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
     });
     expect(doublon.status).toBe(409);
-    expect(doublon.body.message).toMatch(/téléphone/i);
+    // F1 : message identique pour l'e-mail et le téléphone (n'indique pas lequel existe).
+    expect(doublon.body.error.code).toBe('COMPTE_EXISTANT');
+    expect(doublon.body.message).not.toMatch(/téléphone est déjà/i);
   });
 
   test('inscription : confirmation différente et e-mail déjà pris refusés', async () => {

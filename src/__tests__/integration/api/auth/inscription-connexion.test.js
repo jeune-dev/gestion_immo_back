@@ -133,7 +133,9 @@ describe('Auth — inscription', () => {
     expect(parEmail.body.error.code).toBe('COMPTE_EXISTANT');
     const parTel = await api().post(INSCRIPTION).send(corpsInscription({ phone: p.identifiants.phone.replace('+221', '') }));
     expect(parTel.status).toBe(409);
-    expect(parTel.body.error.message).toMatch(/téléphone/);
+    // F1 : message identique pour l'e-mail et le téléphone (n'indique pas lequel existe).
+    expect(parTel.body.error.message).toBe(parEmail.body.error.message);
+    expect(parTel.body.error.message).not.toMatch(/téléphone est déjà|e-mail est déjà/);
   });
 
   test('atomicité (§ 32) : échec à l’ouverture de session → ni compte, ni espace, ni appartenance, ni abonnement, ni audit', async () => {

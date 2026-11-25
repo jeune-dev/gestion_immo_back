@@ -11,6 +11,7 @@ const parametres = require('../../parametres/service/parametres.service.js');
 const email = require('../../../infrastructure/email.service.js');
 const logger = require('../../../utils/logger.js');
 const { comparerTempsConstant } = require('../../../infrastructure/paiement/signature.js');
+const { secretOtp } = require('../../../utils/otp.js');
 
 /**
  * Vérification de l'adresse e-mail AVANT la création du compte (§ 5).
@@ -36,8 +37,9 @@ const normaliser = (adresse) => String(adresse || '').trim().toLowerCase();
 /** Code à 6 chiffres, zéros de tête compris (`048213` est un code valide). */
 const genererCode = () => String(crypto.randomInt(0, 10 ** LONGUEUR_CODE)).padStart(LONGUEUR_CODE, '0');
 
+// Secret dédié aux codes (constat F2) — voir utils/otp.js.
 const empreinteCode = (adresse, code) => crypto
-  .createHmac('sha256', jwtConfig.secret)
+  .createHmac('sha256', secretOtp())
   .update(`${normaliser(adresse)}:${String(code || '').trim()}`)
   .digest('hex');
 

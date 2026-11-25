@@ -2,7 +2,7 @@
 
 const {
   api, MOT_DE_PASSE, nouveauProprietaire, creerImmeuble, creerAppartement, creerLocataire, desactiverEdlObligatoire,
-  bailActif, echeancesDu, telephoneUnique, emailUnique, compter, fermer, sequelize,
+  bailActif, echeancesDu, telephoneUnique, emailUnique, compter, fermer, sequelize, dernierCodeWhatsapp,
 } = require('../../setup/helpers.js');
 const { executerJob } = require('../../../jobs/executerJob.js');
 
@@ -50,7 +50,7 @@ describe('Courses critiques', () => {
     const t = await creerLocataire(p);
     const inv = (await api().post(`/api/v1/locataires/${t.id}/invitation`).set(p.h)).body.data.invitation;
     const activer = () => api().post('/api/v1/auth/locataire/activation')
-      .send({ code: inv.code, phone: t.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE });
+      .send({ code: dernierCodeWhatsapp(t.phone), phone: t.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE });
     const res = await Promise.all([activer(), activer()]);
     expect(res.filter((r) => r.status === 201)).toHaveLength(1);
     expect(await compter('users', "phone = :p AND role_code = 'locataire'", { p: t.phone })).toBe(1);
