@@ -5,6 +5,7 @@ const { jwtConfig, cleHmac } = require('../config/security.js');
 const { User, OwnerMember, Owner } = require('../models/index.js');
 const { UnauthorizedError, ForbiddenError } = require('../errors/AppError.js');
 const { permissionsDuRole } = require('../modules/auth/service/roles.service.js');
+const sessions = require('../modules/auth/service/session.service.js');
 
 /**
  * Authentification par jeton d'accès (Bearer) — reprise de Widjila.
@@ -90,6 +91,10 @@ const auth = async (req, res, next) => {
       return next(new ForbiddenError('Compte désactivé. Contactez le support.', 'COMPTE_INACTIF'));
     }
     if ((decode.tv ?? -1) !== utilisateur.token_version) {
+      return next(new UnauthorizedError('Session expirée, veuillez vous reconnecter', 'SESSION_REVOQUEE'));
+    }
+    // F4 : session révoquée individuellement (déconnexion, appareil retiré).
+    if (decode.sid && await sessions.sidRevoque(decode.sid)) {
       return next(new UnauthorizedError('Session expirée, veuillez vous reconnecter', 'SESSION_REVOQUEE'));
     }
 

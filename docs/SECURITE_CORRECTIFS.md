@@ -136,3 +136,36 @@ Corrigé en chemin : une course réelle dans le middleware d'idempotence (clé d
 - Clés `age` des sauvegardes (clé privée hors serveur), destination `rclone`, crontab (voir `docs/EXPLOITATION.md`).
 - Copier le bloc nginx, certificats (`certbot certonly`).
 - Conformité CDP (loi 2008-12) : déclaration, registre des traitements, politique de conservation — non traitée par le code (constat M8 de l'audit, hors des 10 points).
+
+---
+
+# Audit de sécurité de novembre 2026 — correctifs
+
+Audit en lecture seule (OWASP Top 10, OWASP LLM, NIST CSF, ISO 27001, CIS) : 75/100, deux points bloquants. Correctifs appliqués le 2026-11-18.
+
+| Constat | Correctif | Tests |
+|---|---|---|
+| **E1** dépendances vulnérables (express, joi, multer, uuid, js-beautify) | mises à jour + `overrides` ; `npm audit --omit=dev` : 0 | CI `npm audit` |
+| **E2** téléphone jamais vérifié ; code d'invitation remis au bailleur ; e-mail saisi par le bailleur recopié dans le compte locataire | code WhatsApp à l'inscription (`POST /auth/inscription/code`, table `phone_verifications`, 6 chiffres, 10 min, 5 essais, empreinte HMAC) ; invitation envoyée au SEUL WhatsApp du locataire (la réponse au bailleur ne contient plus ni code ni lien) ; e-mail du bailleur plus jamais recopié | `auth/verification-telephone.test.js` (12), `activation-locataire`, `locataires`, `courses` |
+| **M1** moyen de paiement modifiable avec une simple session | `PUT /paiements/moyens` exige `current_password` (+ code 2FA si active) | `securite/correctifs-audit-2026-11.test.js` |
+| **M2** pas d'en-têtes de sécurité sur les fronts | `deploy/nginx.conf` des trois fronts (CSP, HSTS, nosniff, frame-ancestors…) | — |
+| **M3** mots de passe de 8 caractères | 10 caractères minimum + motifs courants refusés (nouveaux mots de passe seulement) | `unit/validations/common.test.js` |
+| **M4** ni suppression de compte ni durée de conservation | `POST /compte/suppression` (anonymisation) ; tâche `retention` (pièces d'identité 12 mois après le dernier bail) ; `docs/RETENTION.md` | `securite/correctifs-audit-2026-11.test.js` |
+| **M5** clé d'hôte SSH non épinglée en CI | `fingerprint: ${{ secrets.VPS_FINGERPRINT }}` | — |
+| **F1** inscription : message révélant si l'e-mail ou le téléphone existe | message unique | `inscription-connexion` |
+| **F2** codes OTP signés avec `JWT_SECRET` | secret dédié `OTP_SECRET` (obligatoire en production, distinct) | `unit/config` |
+| **F3** liens signés valables 1 h | 5 min par défaut, 15 min maximum | — |
+| **F4** jeton d'accès d'une session révoquée valable 15 min | `sid` révoqué inscrit dans Redis, refusé par le middleware | `securite/…`, `compte` |
+| **F5** verrouillage exploitable pour bloquer un tiers | échecs comptés par compte + IP (5) ; verrouillage global du compte à 20 | `inscription-connexion` |
+| **F8** limite globale par IP trop basse (CGNAT) | 3 000 / 15 min | — |
+| Configuration `MFA_DESACTIVEE_DEV` | avertissement au démarrage (ignoré en production) | — |
+| Procédure d'incident absente | `docs/INCIDENT.md` | — |
+
+Non traités ici, sur décision : CAPTCHA (M6, plus tard) ; épinglage de certificat dans l'application mobile (F7 — risque opérationnel au renouvellement Let's Encrypt).
+
+## Reste à faire côté exploitation
+
+- `.env` de production : `OTP_SECRET` (`npm run secrets:generer`), `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_TEMPLATE_CODE` — **sans WhatsApp configuré, l'inscription répond 503** et les invitations partent en « échec ».
+- Meta : faire approuver un modèle de catégorie **Authentication** (bouton « Copier le code »), langue `fr`, nommé comme `WHATSAPP_TEMPLATE_CODE`.
+- GitHub : secret `VPS_FINGERPRINT` (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` sur le VPS).
+- nginx des fronts : installer les `deploy/nginx.conf` fournis.

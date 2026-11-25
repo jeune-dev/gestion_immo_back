@@ -8,7 +8,7 @@ const { ordre, rechercheTexte } = require('../../../utils/liste.js');
 const { ConflictError } = require('../../../errors/AppError.js');
 const invitations = require('../../auth/service/invitation.service.js');
 const documents = require('../../document/service/document.service.js');
-const email = require('../../../infrastructure/email.service.js');
+const whatsapp = require('../../../infrastructure/whatsapp.service.js');
 const { journaliser, difference } = require('../../audit/service/audit.service.js');
 const logger = require('../../../utils/logger.js');
 
@@ -128,8 +128,8 @@ async function creer(ownerId, user, donnees) {
     const invitation = inviter ? await invitations.creer(tenant, user.id, t) : null;
     return { tenant, invitation };
   });
-  if (resultat.invitation) await envoyerInvitation(ownerId, resultat.tenant, resultat.invitation);
-  return resultat;
+  const canal = resultat.invitation ? await envoyerInvitation(resultat.tenant, resultat.invitation) : null;
+  return { ...resultat, canal };
 }
 
 async function modifier(id, ownerId, donnees) {
@@ -160,9 +160,14 @@ async function supprimer(id, ownerId) {
 }
 
 /**
- * Invitation (§ 5 option A) : code + lien d'activation. Le code est RENVOYÉ au
- * propriétaire, qui peut le transmettre lui-même (oral, SMS) ; il est aussi
- * envoyé par e-mail si le locataire en a un.
+ * Invitation (§ 5 option A) : code d'activation à 8 chiffres.
+ *
+ * Constat E2 de l'audit : le code n'est PLUS renvoyé au propriétaire ni envoyé
+ * à l'e-mail qu'il a saisi. Il part UNIQUEMENT sur le WhatsApp du numéro du
+ * locataire : activer le compte prouve ainsi la possession de ce numéro, et
+ * le bailleur ne peut pas ouvrir (ni s'approprier) le compte à sa place.
+ * Message d'authentification strictement nécessaire à l'ouverture du compte :
+ * il ne dépend pas du consentement aux notifications WhatsApp (§ 54.3).
  */
 async function inviter(id, ownerId, user) {
   const { tenant, invitation } = await sequelize.transaction(async (t) => {
@@ -172,27 +177,18 @@ async function inviter(id, ownerId, user) {
     await journaliser({ action: 'locataire.invitation', entityType: 'tenant', entityId: id, ownerId }, t);
     return { tenant: fiche, invitation: inv };
   });
-  const canal = await envoyerInvitation(ownerId, tenant, invitation);
+  const canal = await envoyerInvitation(tenant, invitation);
   return { tenant, invitation, canal };
 }
 
-async function envoyerInvitation(ownerId, tenant, invitation) {
-  if (!tenant.email) return 'manuel';
+/** @returns {Promise<'whatsapp'|'echec'>} */
+async function envoyerInvitation(tenant, invitation) {
   try {
-    const owner = await Owner.findByPk(ownerId, { attributes: ['display_name'] });
-    const base = process.env.APP_PUBLIC_URL;
-    const r = await email.envoyerInvitationLocataire({
-      email: tenant.email,
-      prenom: tenant.first_name,
-      proprietaire: owner.display_name,
-      code: invitation.code,
-      lien: base ? `${base.replace(/\/$/, '')}/activation/${invitation.token}` : null,
-      jours: invitation.jours,
-    });
-    return r.envoye ? 'email' : 'manuel';
+    await whatsapp.envoyerCode({ telephone: tenant.phone, code: invitation.code });
+    return 'whatsapp';
   } catch (err) {
-    logger.warn('[locataire] Envoi de l’invitation par e-mail impossible', { error: err.message });
-    return 'manuel';
+    logger.warn('[locataire] Envoi de l’invitation par WhatsApp impossible', { error: err.message, tenantId: tenant.id });
+    return 'echec';
   }
 }
 

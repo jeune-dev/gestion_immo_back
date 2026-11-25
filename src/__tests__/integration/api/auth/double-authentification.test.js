@@ -163,7 +163,7 @@ describe('Super admin : double authentification obligatoire', () => {
     const admin = await superAdmin();
     const changer = (password) => api().post(`${COMPTE}/mot-de-passe`).set(admin.h)
       .send({ current_password: MOT_DE_PASSE, password, password_confirmation: password });
-    const faible = await changer('Password123');
+    const faible = await changer('Baobab2024Xyz');
     expect(faible.status).toBe(422);
     expect(faible.body.error.code).toBe('MOT_DE_PASSE_TROP_FAIBLE');
     const identique = await changer(MOT_DE_PASSE);

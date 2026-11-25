@@ -37,7 +37,7 @@ function estConfigure() {
  * @param {string[]} p.parametres  valeurs des variables {{1}}, {{2}}…
  * @returns {Promise<{ id: string }>}
  */
-async function envoyerModele({ telephone, modele, langue, parametres }) {
+async function envoyerModele({ telephone, modele, langue, parametres, composants = [] }) {
   if (!estConfigure()) {
     const err = new Error('WhatsApp non configuré');
     err.statut = 400;
@@ -52,9 +52,12 @@ async function envoyerModele({ telephone, modele, langue, parametres }) {
     template: {
       name: modele,
       language: { code: langue },
-      components: parametres.length
-        ? [{ type: 'body', parameters: parametres.map((texte) => ({ type: 'text', text: String(texte).slice(0, 1000) })) }]
-        : [],
+      components: [
+        ...(parametres.length
+          ? [{ type: 'body', parameters: parametres.map((texte) => ({ type: 'text', text: String(texte).slice(0, 1000) })) }]
+          : []),
+        ...composants,
+      ],
     },
   };
 
@@ -75,6 +78,29 @@ async function envoyerModele({ telephone, modele, langue, parametres }) {
 }
 
 /**
+ * Envoie un code à usage unique par le modèle d'AUTHENTIFICATION (catégorie
+ * Meta « Authentication », bouton « Copier le code ») : le code est la
+ * variable du corps ET celle du bouton, comme l'exige Meta pour ce type.
+ * Modèle : WHATSAPP_TEMPLATE_CODE (défaut code_verification), langue
+ * WHATSAPP_TEMPLATE_CODE_LANGUE (défaut fr).
+ */
+async function envoyerCode({ telephone, code }) {
+  if (!estConfigure() && process.env.NODE_ENV !== 'production') {
+    // Développement / tests uniquement : le code est écrit dans les logs.
+    // En production, envoyerModele refuse (WhatsApp non configuré).
+    require('../utils/logger.js').info(`[whatsapp] Non configuré — code pour ${telephone} : ${code}`);
+    return { id: null, simule: true };
+  }
+  return envoyerModele({
+    telephone,
+    modele: process.env.WHATSAPP_TEMPLATE_CODE || 'code_verification',
+    langue: process.env.WHATSAPP_TEMPLATE_CODE_LANGUE || 'fr',
+    parametres: [code],
+    composants: [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(code) }] }],
+  });
+}
+
+/**
  * Vérifie la signature `X-Hub-Signature-256` d'un webhook (HMAC-SHA256 du corps
  * BRUT avec le secret de l'application), en temps constant.
  */
@@ -89,4 +115,4 @@ function verifierSignature(corpsBrut, entete) {
 /** Statut Meta → statut interne de `message_deliveries`. */
 const STATUTS = { sent: 'envoye', delivered: 'distribue', read: 'lu', failed: 'echec' };
 
-module.exports = { estConfigure, envoyerModele, verifierSignature, STATUTS, disjoncteur };
+module.exports = { estConfigure, envoyerModele, envoyerCode, verifierSignature, STATUTS, disjoncteur };

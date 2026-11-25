@@ -7,6 +7,7 @@ const { UnauthorizedError } = require('../../../errors/AppError.js');
 const AuthService = require('../service/auth.service.js');
 const sessions = require('../service/session.service.js');
 const MfaService = require('../service/mfa.service.js');
+const VerificationTelephone = require('../service/verificationTelephone.service.js');
 
 /**
  * Client NAVIGATEUR (super admin web) : le refresh token part en cookie
@@ -57,6 +58,11 @@ function repondreSession(req, res, { user, session }, message, statut = 200) {
 }
 
 const lireRefresh = (req) => req.cookies?.refresh_token || req.body?.refresh_token || null;
+
+exports.demanderCodeInscription = asyncHandler(async (req, res) => {
+  const { minutes } = await VerificationTelephone.envoyerCode(req.body.phone, 'inscription');
+  return ok(res, { canal: 'whatsapp', expires_in: minutes * 60 }, 'Un code de vérification a été envoyé par WhatsApp');
+});
 
 exports.inscription = asyncHandler(async (req, res) => {
   const resultat = await AuthService.inscrireProprietaire(req.body, meta(req));

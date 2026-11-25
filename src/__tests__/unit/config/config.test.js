@@ -30,7 +30,7 @@ const SECRET_A = 'a'.repeat(40);
 const SECRET_B = 'b'.repeat(40);
 const SECRET_C = 'c'.repeat(40);
 const PROD = {
-  NODE_ENV: 'production', JWT_SECRET: SECRET_A, JWT_REFRESH_SECRET: SECRET_B, INVITATION_SECRET: SECRET_C,
+  NODE_ENV: 'production', JWT_SECRET: SECRET_A, JWT_REFRESH_SECRET: SECRET_B, INVITATION_SECRET: SECRET_C, OTP_SECRET: 'o'.repeat(40),
   APP_ENC_KEY: Buffer.alloc(32, 1).toString('base64'), CORS_ORIGIN: 'https://admin.exemple.sn',
   REDIS_URL: 'redis://:motdepasse@redis:6379', METRICS_TOKEN: 'm'.repeat(40), ALERT_WEBHOOK_URL: 'https://alertes.exemple.sn/hook',
   PAYDUNYA_BASE_URL: '', PAYDUNYA_MASTER_KEY: '',
@@ -55,6 +55,9 @@ describe('garde-fous de démarrage (config/security.js)', () => {
     ['secret d’invitation absent', { INVITATION_SECRET: '' }, /INVITATION_SECRET/],
     ['secret d’invitation trop court', { INVITATION_SECRET: 'court' }, /INVITATION_SECRET/],
     ['secret d’invitation = secret JWT', { INVITATION_SECRET: SECRET_A }, /différents/],
+    ['secret des codes absent (F2)', { OTP_SECRET: '' }, /OTP_SECRET/],
+    ['secret des codes trop court (F2)', { OTP_SECRET: 'court' }, /OTP_SECRET/],
+    ['secret des codes = secret JWT (F2)', { OTP_SECRET: SECRET_A }, /différents/],
     ['jeton de métriques = secret de rafraîchissement', { METRICS_TOKEN: SECRET_B }, /différents/],
     ['CORS_ORIGIN absent en production', { CORS_ORIGIN: '' }, /CORS_ORIGIN est obligatoire/],
     ['origine CORS en http:// en production', { CORS_ORIGIN: 'http://admin.exemple.sn' }, /https/],

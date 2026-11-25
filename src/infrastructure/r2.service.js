@@ -243,9 +243,14 @@ async function existe(valeur) {
  * URL signée temporaire — exigence du cahier des charges : « les liens de
  * téléchargement doivent être temporaires et signés ».
  * @param {string} valeur — clé ou chemin stocké en base
- * @param {number} [expiresIn] — durée de validité en secondes (défaut 1 h)
+ * @param {number} [expiresIn] — durée de validité en secondes (défaut 5 min,
+ *   plafond 15 min — constat F3 : un lien qui fuit — historique, journal de
+ *   proxy, capture d'écran — ne doit pas rester utilisable des heures)
  */
-async function urlSignee(valeur, expiresIn = 3600) {
+const DUREE_MAX_LIEN_S = 900;
+async function urlSignee(valeur, expiresIn = 300) {
+  // eslint-disable-next-line no-param-reassign
+  expiresIn = Math.min(Math.max(1, Number(expiresIn) || 300), DUREE_MAX_LIEN_S);
   const cle = versCle(valeur);
   if (!cle) throw new Error('Clé R2 invalide');
   return getSignedUrl(

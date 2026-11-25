@@ -38,6 +38,20 @@ if (isProd && !process.env.APP_ENC_KEY) {
   throw new Error("APP_ENC_KEY est requise en production (chiffrement des données sensibles). Générez-la : node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"");
 }
 
+// ── Interrupteur de développement : jamais en production ─────────────────────
+// MFA_DESACTIVEE_DEV est IGNORÉ quand NODE_ENV=production (la double
+// authentification du super admin reste obligatoire). Sa présence signale un
+// .env de développement copié sur le serveur : avertissement bruyant au
+// démarrage (constat de configuration de l'audit).
+if (isProd && process.env.MFA_DESACTIVEE_DEV) {
+  // eslint-disable-next-line no-console
+  console.error('[sécurité] MFA_DESACTIVEE_DEV présent dans l’environnement de production : il est ignoré, retirez-le du .env.');
+}
+if (!isProd && process.env.MFA_DESACTIVEE_DEV === 'true' && process.env.NODE_ENV !== 'test') {
+  // eslint-disable-next-line no-console
+  console.warn('[sécurité] MFA_DESACTIVEE_DEV=true : double authentification du super admin DÉSACTIVÉE (développement local uniquement).');
+}
+
 // ── Secrets de production : bien formés et TOUS distincts (constat M1) ────────
 // Contrôlés au DÉMARRAGE : une clé mal formée ne doit pas se révéler au premier
 // chiffrement, et un secret réutilisé d'un usage à l'autre (ou copié d'un
@@ -49,6 +63,10 @@ if (isProd) {
   }
   if (!process.env.INVITATION_SECRET || process.env.INVITATION_SECRET.length < 32) {
     throw new Error('En production, INVITATION_SECRET est obligatoire et doit contenir au moins 32 caractères (npm run secrets:generer).');
+  }
+  // Codes à usage unique (constat F2) : secret dédié, distinct de JWT_SECRET.
+  if (!process.env.OTP_SECRET || process.env.OTP_SECRET.length < 32) {
+    throw new Error('En production, OTP_SECRET est obligatoire et doit contenir au moins 32 caractères (npm run secrets:generer).');
   }
   // Supervision et limites partagées (constat M9) : sans Redis, les limites
   // de débit sont comptées par processus (et contournables en cluster) ; sans
@@ -71,7 +89,7 @@ if (isProd) {
     throw new Error('En production, PAYDUNYA_MODE doit valoir « live » (clés de production de la plateforme).');
   }
   const vus = new Map();
-  for (const cle of ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'INVITATION_SECRET', 'APP_ENC_KEY', 'METRICS_TOKEN']) {
+  for (const cle of ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'INVITATION_SECRET', 'OTP_SECRET', 'APP_ENC_KEY', 'METRICS_TOKEN']) {
     const valeur = process.env[cle];
     if (!valeur) continue;
     if (vus.has(valeur)) throw new Error(`${cle} et ${vus.get(valeur)} doivent être différents (un secret par usage).`);
@@ -115,7 +133,12 @@ const bcryptConfig = {
 
 /** Verrouillage de compte après échecs successifs (anti force brute, § 32). */
 const verrouillageConfig = {
+  // Mots de passe faux pour un compte DEPUIS UNE MÊME IP avant blocage de cette IP sur ce compte.
   maxTentatives: parseInt(process.env.LOGIN_MAX_TENTATIVES || '5', 10),
+  // Constat F5 : seuil GLOBAL (toutes IP confondues) avant verrouillage du compte
+  // lui-même. Plus haut : un tiers ne peut plus bloquer le titulaire en tapant
+  // 5 mots de passe faux, mais une attaque distribuée reste plafonnée.
+  maxTentativesGlobal: parseInt(process.env.LOGIN_MAX_TENTATIVES_GLOBAL || '20', 10),
   dureeMinutes: parseInt(process.env.LOGIN_BLOCAGE_MINUTES || '15', 10),
 };
 
@@ -140,8 +163,14 @@ const limite = (windowMin, max, texte) => ({
 
 const env = (cle, defaut) => parseInt(process.env[cle] || String(defaut), 10);
 
-/** Filet global par IP (anti-scan). */
-const rateLimitConfig = limite(15, env('RATE_LIMIT_GLOBAL_MAX', 1000), 'Trop de requêtes. Veuillez réessayer dans quelques minutes.');
+/**
+ * Filet global par IP (anti-scan). Constat F8 : au Sénégal, les opérateurs
+ * mobiles partagent une même IP publique entre de nombreux abonnés (CGNAT) et
+ * un bureau sort par une seule IP ; 1 000 requêtes / 15 min bloquaient des
+ * utilisateurs légitimes. Les limites par utilisateur et par route sensible
+ * restent les vraies barrières.
+ */
+const rateLimitConfig = limite(15, env('RATE_LIMIT_GLOBAL_MAX', 3000), 'Trop de requêtes. Veuillez réessayer dans quelques minutes.');
 /** Par utilisateur authentifié. */
 const authenticatedRateLimitConfig = limite(15, env('RATE_LIMIT_UTILISATEUR_MAX', 600), 'Trop de requêtes. Veuillez réessayer dans quelques minutes.');
 /** Tentatives d'authentification (connexion, inscription, OTP, activation). */

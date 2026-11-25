@@ -30,6 +30,7 @@ function genererSecrets() {
     JWT_SECRET: aleatoire(48),
     JWT_REFRESH_SECRET: aleatoire(48),
     INVITATION_SECRET: aleatoire(48),
+    OTP_SECRET: aleatoire(48),
     APP_ENC_KEY: crypto.randomBytes(32).toString('base64'),
     METRICS_TOKEN: aleatoire(32),
     // Hexadécimal : inclus tel quel dans l'URL redis://:<mot de passe>@redis:6379.

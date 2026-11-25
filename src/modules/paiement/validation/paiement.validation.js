@@ -76,6 +76,11 @@ const rejetRapprochementSchema = Joi.object({
 
 // § 51.5 — identifiants propres au propriétaire.
 const moyenSchema = Joi.object({
+  // M1 : ré-authentification (mot de passe actuel + code 2FA si active).
+  current_password: Joi.string().max(128).required()
+    .messages({ 'any.required': 'Saisissez votre mot de passe pour confirmer la modification du moyen de paiement' }),
+  code: Joi.string().trim().pattern(/^\d{6}$/).allow('', null),
+  code_secours: Joi.string().trim().max(20).allow('', null),
   provider: Joi.string().valid(...codes(FOURNISSEUR_PAIEMENT)).required(),
   mode: Joi.string().valid(...codes(MODE_TRANSACTION)).required(),
   label: Joi.string().trim().max(100).allow('', null),

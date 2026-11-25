@@ -15,6 +15,8 @@ const User = sequelize.define('User', {
   password_hash: { type: DataTypes.STRING(100), allowNull: false },
   status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'actif' },
   email_verified_at: { type: DataTypes.DATE },
+  phone_verified_at: { type: DataTypes.DATE },
+  anonymized_at: { type: DataTypes.DATE },
   failed_login_attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   locked_until: { type: DataTypes.DATE },
   token_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },

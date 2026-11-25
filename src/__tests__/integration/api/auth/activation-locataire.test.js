@@ -1,8 +1,19 @@
 'use strict';
 
 const {
-  api, bearer, MOT_DE_PASSE, nouveauProprietaire, creerLocataire, telephoneUnique, compter, fermer, sequelize,
+  api, bearer, MOT_DE_PASSE, nouveauProprietaire, creerLocataire, telephoneUnique, compter, fermer, sequelize, dernierCodeWhatsapp,
 } = require('../../../setup/helpers.js');
+const invitations = require('../../../../modules/auth/service/invitation.service.js');
+
+// Le lien d'activation (jeton) n'est plus communiqué à personne (E2) : le
+// chemin « lien » de l'API reste testé en capturant le jeton à sa création.
+const jetons = new Map();
+const creerReel = invitations.creer;
+invitations.creer = async (tenant, ...reste) => {
+  const inv = await creerReel(tenant, ...reste);
+  jetons.set(tenant.id, inv.token);
+  return inv;
+};
 
 /**
  * § 5 option B — activation du compte locataire par CODE (+ téléphone) ou par
@@ -18,7 +29,9 @@ afterAll(fermer);
 async function inviter(proprio, tenant) {
   const res = await api().post(`/api/v1/locataires/${tenant.id}/invitation`).set(proprio.h).send({});
   expect(res.status).toBe(201);
-  return res.body.data.invitation;
+  // E2 : ni code ni lien dans la réponse au propriétaire ; le code part sur le WhatsApp du locataire.
+  expect(res.body.data.invitation).toEqual({ expires_at: expect.any(String), canal: 'whatsapp' });
+  return { ...res.body.data.invitation, code: dernierCodeWhatsapp(tenant.phone), token: jetons.get(tenant.id) };
 }
 
 const activerParCode = (code, phone, password = MDP_LOCATAIRE, extra = {}) => api().post(ACTIVATION)
@@ -117,15 +130,16 @@ describe('Activation par code', () => {
 });
 
 describe('Activation par lien', () => {
-  test('nominal : compte créé avec l’e-mail de la fiche, audit en mode « lien »', async () => {
+  test('nominal : compte créé SANS l’e-mail saisi par le bailleur (E2), audit en mode « lien »', async () => {
     const { proprio, tenant, invitation } = await preparer();
     const res = await api().post(ACTIVATION).send({ token: invitation.token, password: MDP_LOCATAIRE, password_confirmation: MDP_LOCATAIRE });
     expect(res.status).toBe(201);
-    expect(res.body.data.user.email).toBe(tenant.email);
+    expect(tenant.email).toBeTruthy();
+    expect(res.body.data.user.email).toBeNull();
     expect(await compter('audit_logs', "action = 'locataire.activation_compte' AND owner_id = :o AND details->>'mode' = 'lien'", { o: proprio.ownerId })).toBe(1);
   });
 
-  test('jeton inconnu : 400 ; e-mail de la fiche déjà pris par un autre compte → compte créé sans e-mail', async () => {
+  test('jeton inconnu : 400 ; e-mail de la fiche (même déjà pris) jamais recopié → compte créé sans e-mail', async () => {
     expect((await api().post(ACTIVATION).send({ token: 'x'.repeat(43), password: MDP_LOCATAIRE, password_confirmation: MDP_LOCATAIRE })).status).toBe(400);
     const autre = await nouveauProprietaire();
     const proprio = await nouveauProprietaire();

@@ -20,5 +20,7 @@ router.post('/mfa/activer', mutationRateLimit, validate(v.mfaActivationSchema), 
 router.post('/mfa/desactiver', mutationRateLimit, validate(v.mfaDesactivationSchema), ctrl.desactiverMfa);
 router.post('/mfa/codes-secours', mutationRateLimit, validate(v.mfaCodesSecoursSchema), ctrl.codesSecoursMfa);
 router.delete('/appareils', validate(v.suppressionAppareilSchema), ctrl.supprimerAppareil);
+// M4 — suppression du compte à la demande de l'utilisateur (anonymisation).
+router.post('/suppression', mutationRateLimit, validate(v.suppressionCompteSchema), ctrl.supprimerCompte);
 
 module.exports = router;

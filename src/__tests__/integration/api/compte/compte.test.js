@@ -278,10 +278,13 @@ describe('Sessions', () => {
     expect((await api().post('/api/v1/auth/refresh').send({ refresh_token: b.refreshToken })).status).toBe(200);
 
     const [[sessionA]] = await sequelize.query('SELECT id FROM refresh_tokens WHERE user_id = :u', { replacements: { u: a.user.id } });
+    const a2 = bearer((await api().post('/api/v1/auth/connexion').send({ identifiant: a.identifiants.email, password: MOT_DE_PASSE })).body.data.access_token);
     expect((await api().delete(`${COMPTE}/sessions/${sessionA.id}`).set(a.h)).status).toBe(200);
     expect(await compter('audit_logs', "action = 'compte.deconnexion_distante' AND entity_id = :s", { s: sessionA.id })).toBe(1);
-    expect((await api().delete(`${COMPTE}/sessions/${sessionA.id}`).set(a.h)).status).toBe(404);
-    expect((await api().delete(`${COMPTE}/sessions/pas-un-uuid`).set(a.h)).status).toBe(422);
+    // F4 : le jeton d'accès de la session fermée est refusé aussitôt.
+    expect((await api().delete(`${COMPTE}/sessions/${sessionA.id}`).set(a.h)).status).toBe(401);
+    expect((await api().delete(`${COMPTE}/sessions/${sessionA.id}`).set(a2)).status).toBe(404);
+    expect((await api().delete(`${COMPTE}/sessions/pas-un-uuid`).set(a2)).status).toBe(422);
   });
 
   test('révoquer toutes : tous les jetons (accès et refresh) périmés, audit', async () => {

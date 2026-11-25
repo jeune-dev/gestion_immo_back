@@ -162,6 +162,12 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          # Constat M5 : empreinte de la clé d'hôte du serveur ÉPINGLÉE — sans
+          # elle, l'action accepte n'importe quel serveur (homme du milieu qui
+          # recevrait la clé de déploiement et le code). Obtenir la valeur sur
+          # le VPS : ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+          # (partie « SHA256:… »), à enregistrer dans le secret VPS_FINGERPRINT.
+          fingerprint: ${{ secrets.VPS_FINGERPRINT }}
           # La construction de l'image (apt, npm ci, npm rebuild bcrypt)
           # dépasse les 10 minutes par défaut de l'action, ce qui couperait la
           # connexion SSH avant la fin — un échec signalé alors que l'image

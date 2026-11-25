@@ -2,7 +2,7 @@
 
 const {
   api, MOT_DE_PASSE, nouveauProprietaire, creerImmeuble, creerAppartement, creerLocataire, desactiverEdlObligatoire,
-  bailActif, echeancesDu, telephoneUnique, emailUnique, compter, fermer, sequelize,
+  bailActif, echeancesDu, telephoneUnique, emailUnique, codeInscription, dernierCodeWhatsapp, compter, fermer, sequelize,
 } = require('../../setup/helpers.js');
 const { executerJob } = require('../../../jobs/executerJob.js');
 
@@ -37,10 +37,12 @@ describe('Courses critiques', () => {
 
   test('deux inscriptions simultanées avec le même téléphone : un seul compte', async () => {
     const phone = telephoneUnique();
-    const corps = () => ({ first_name: 'A', last_name: 'B', phone, email: emailUnique(), password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE });
+    const code = await codeInscription(phone);
+    const corps = () => ({ first_name: 'A', last_name: 'B', phone, email: emailUnique(), password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE, code });
     const res = await Promise.all([1, 2, 3].map(() => api().post('/api/v1/auth/inscription').send(corps())));
     expect(res.filter((r) => r.status === 201)).toHaveLength(1);
-    expect(res.every((r) => [201, 409].includes(r.status))).toBe(true);
+    // Le code WhatsApp est à usage unique (E2) : les perdants sont refusés au code (400) ou à l'unicité (409).
+    expect(res.every((r) => [201, 400, 409].includes(r.status))).toBe(true);
     expect(await compter('users', 'phone = :p', { p: phone })).toBe(1);
     expect(await compter('owners', 'phone = :p', { p: phone })).toBe(1);
   });
@@ -50,7 +52,7 @@ describe('Courses critiques', () => {
     const t = await creerLocataire(p);
     const inv = (await api().post(`/api/v1/locataires/${t.id}/invitation`).set(p.h)).body.data.invitation;
     const activer = () => api().post('/api/v1/auth/locataire/activation')
-      .send({ code: inv.code, phone: t.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE });
+      .send({ code: dernierCodeWhatsapp(t.phone), phone: t.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE });
     const res = await Promise.all([activer(), activer()]);
     expect(res.filter((r) => r.status === 201)).toHaveLength(1);
     expect(await compter('users', "phone = :p AND role_code = 'locataire'", { p: t.phone })).toBe(1);

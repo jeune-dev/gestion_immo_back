@@ -26,6 +26,7 @@ const Tenant = sequelize.define('Tenant', {
       this.setDataValue('id_document_number', valeur ? encrypt(valeur) : null);
     },
   },
+  id_document_purged_at: { type: DataTypes.DATE },
   // Texte libre du bailleur : chiffré au repos (constat M13 de l’audit).
   notes: {
     type: DataTypes.TEXT,

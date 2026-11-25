@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, bearer, MOT_DE_PASSE, nouveauProprietaire, telephoneUnique, emailUnique, fermer, sequelize,
+  api, bearer, MOT_DE_PASSE, nouveauProprietaire, telephoneUnique, emailUnique, fermer, sequelize, codeInscription,
 } = require('../../../setup/helpers.js');
 
 /**
@@ -28,7 +28,7 @@ describe('Authentification', () => {
     expect((await api().post('/api/v1/auth/inscription').send(corps)).status).toBe(422);
     const p = await nouveauProprietaire();
     const doublon = await api().post('/api/v1/auth/inscription')
-      .send({ ...corps, password_confirmation: MOT_DE_PASSE, email: p.identifiants.email });
+      .send({ ...corps, password_confirmation: MOT_DE_PASSE, email: p.identifiants.email, code: await codeInscription(corps.phone) });
     expect(doublon.status).toBe(409);
   });
 

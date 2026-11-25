@@ -1,8 +1,9 @@
 'use strict';
 
 const {
-  api, MOT_DE_PASSE, nouveauProprietaire, telephoneUnique, emailUnique, compter, fermer, sequelize,
+  api, MOT_DE_PASSE, nouveauProprietaire, telephoneUnique, emailUnique, compter, fermer, sequelize, codeInscription,
 } = require('../../../setup/helpers.js');
+const { normaliserTelephone } = require('../../../../utils/telephone.js');
 const sessions = require('../../../../modules/auth/service/session.service.js');
 
 /**
@@ -18,6 +19,16 @@ const corpsInscription = (surcharges = {}) => ({
   password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE, ...surcharges,
 });
 
+/** Inscription avec le code WhatsApp du numéro (E2), demandé juste avant si absent. */
+const inscrire = async (corps) => {
+  let { code } = corps;
+  if (code === undefined) {
+    const tel = normaliserTelephone(corps.phone);
+    code = tel && tel.length <= 20 ? await codeInscription(tel) : '123456';
+  }
+  return api().post(INSCRIPTION).send({ ...corps, code });
+};
+
 const connecter = (identifiant, password = MOT_DE_PASSE) => api().post(CONNEXION).send({ identifiant, password });
 
 afterAll(fermer);
@@ -25,7 +36,7 @@ afterAll(fermer);
 describe('Auth — inscription', () => {
   test('nominal : 201, session, compte + espace + appartenance + essai + audit + refresh token en base', async () => {
     const corps = corpsInscription({ company_name: 'SCI Fall', city: 'Thiès' });
-    const res = await api().post(INSCRIPTION).send(corps);
+    const res = await inscrire(corps);
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ success: true, message: 'Compte propriétaire créé' });
     const d = res.body.data;
@@ -51,14 +62,14 @@ describe('Auth — inscription', () => {
   test('téléphone national et e-mail en majuscules : normalisés (E.164, minuscules)', async () => {
     const tel = telephoneUnique();
     const email = emailUnique('MAJ').toUpperCase();
-    const res = await api().post(INSCRIPTION).send(corpsInscription({ phone: `${tel.slice(4, 6)} ${tel.slice(6, 9)} ${tel.slice(9, 11)} ${tel.slice(11)}`, email }));
+    const res = await inscrire(corpsInscription({ phone: `${tel.slice(4, 6)} ${tel.slice(6, 9)} ${tel.slice(9, 11)} ${tel.slice(11)}`, email }));
     expect(res.status).toBe(201);
     expect(res.body.data.user.phone).toBe(tel);
     expect(res.body.data.user.email).toBe(email.toLowerCase());
   });
 
   test('élévation de privilège : role_code, status, owner_id, permissions, token_version envoyés sont ignorés', async () => {
-    const res = await api().post(INSCRIPTION).send(corpsInscription({
+    const res = await inscrire(corpsInscription({
       role_code: 'super_admin', role: 'super_admin', status: 'inactif', owner_id: '00000000-0000-4000-8000-000000000000',
       permissions: ['admin.dashboard'], token_version: 99, must_change_password: true, email_verified_at: '2020-01-01',
     }));
@@ -95,7 +106,7 @@ describe('Auth — inscription', () => {
     const corps = corpsInscription(surcharge);
     for (const [cle, valeur] of Object.entries(surcharge)) if (valeur === undefined) delete corps[cle];
     const avant = await compter('users');
-    const res = await api().post(INSCRIPTION).send(corps);
+    const res = await inscrire(corps);
     expect(res.status).toBe(422);
     expect(res.body).toMatchObject({ success: false, error: { code: 'DONNEES_INVALIDES', details: expect.any(Array) } });
     expect(await compter('users')).toBe(avant);
@@ -115,19 +126,21 @@ describe('Auth — inscription', () => {
 
   test('doublons : même e-mail (casse différente) ou même téléphone (format national) → 409 COMPTE_EXISTANT', async () => {
     const p = await nouveauProprietaire();
-    const parEmail = await api().post(INSCRIPTION).send(corpsInscription({ email: p.identifiants.email.toUpperCase() }));
+    const parEmail = await inscrire(corpsInscription({ email: p.identifiants.email.toUpperCase() }));
     expect(parEmail.status).toBe(409);
     expect(parEmail.body.error.code).toBe('COMPTE_EXISTANT');
-    const parTel = await api().post(INSCRIPTION).send(corpsInscription({ phone: p.identifiants.phone.replace('+221', '') }));
+    const parTel = await inscrire(corpsInscription({ phone: p.identifiants.phone.replace('+221', '') }));
     expect(parTel.status).toBe(409);
-    expect(parTel.body.error.message).toMatch(/téléphone/);
+    // F1 : message IDENTIQUE pour l'e-mail et le téléphone (n'indique pas lequel existe).
+    expect(parTel.body.error.message).toBe(parEmail.body.error.message);
+    expect(parEmail.body.error.message).not.toMatch(/e-mail est déjà|téléphone est déjà/);
   });
 
   test('atomicité (§ 32) : échec à l’ouverture de session → ni compte, ni espace, ni appartenance, ni abonnement, ni audit', async () => {
     const corps = corpsInscription();
     const espion = jest.spyOn(sessions, 'ouvrirSession').mockRejectedValueOnce(new Error('panne simulée'));
     try {
-      const res = await api().post(INSCRIPTION).send(corps);
+      const res = await inscrire(corps);
       expect(res.status).toBe(500);
     } finally {
       espion.mockRestore();
@@ -138,15 +151,15 @@ describe('Auth — inscription', () => {
     expect(await compter('subscriptions s JOIN owners o ON o.id = s.owner_id', 'o.phone = :p', { p: corps.phone })).toBe(0);
     expect(await compter('audit_logs', "action = 'compte.creation' AND details->>'role' = 'proprietaire' AND created_at > now() - interval '5 seconds' AND entity_id NOT IN (SELECT id::text FROM users)")).toBe(0);
     // Le même formulaire réussit ensuite : rien de résiduel ne bloque.
-    expect((await api().post(INSCRIPTION).send(corps)).status).toBe(201);
+    expect((await inscrire(corps)).status).toBe(201);
   });
 
   test('concurrence : deux inscriptions simultanées avec le même e-mail → exactement un compte', async () => {
     const email = emailUnique('course');
     const reponses = await Promise.all([
-      api().post(INSCRIPTION).send(corpsInscription({ email })),
-      api().post(INSCRIPTION).send(corpsInscription({ email })),
-      api().post(INSCRIPTION).send(corpsInscription({ email })),
+      inscrire(corpsInscription({ email })),
+      inscrire(corpsInscription({ email })),
+      inscrire(corpsInscription({ email })),
     ]);
     const statuts = reponses.map((r) => r.status).sort();
     expect(statuts).toEqual([201, 409, 409]);
@@ -156,11 +169,15 @@ describe('Auth — inscription', () => {
 
   test('concurrence : deux inscriptions simultanées avec le même téléphone → exactement un compte', async () => {
     const phone = telephoneUnique();
+    const code = await codeInscription(phone);
     const reponses = await Promise.all([
-      api().post(INSCRIPTION).send(corpsInscription({ phone })),
-      api().post(INSCRIPTION).send(corpsInscription({ phone })),
+      inscrire(corpsInscription({ phone, code })),
+      inscrire(corpsInscription({ phone, code })),
     ]);
-    expect(reponses.map((r) => r.status).sort()).toEqual([201, 409]);
+    // Code à usage unique (E2) : le perdant est refusé au code (400) ou à l'unicité (409).
+    const statuts = reponses.map((r) => r.status).sort();
+    expect(statuts[0]).toBe(201);
+    expect([400, 409]).toContain(statuts[1]);
     expect(await compter('users', 'phone = :p', { p: phone })).toBe(1);
     expect(await compter('owners', 'phone = :p', { p: phone })).toBe(1);
   });
@@ -240,17 +257,30 @@ describe('Auth — connexion', () => {
       expect(r.body.error).not.toHaveProperty('details');
     }
     expect(await compter('audit_logs', "action = 'compte.verrouillage' AND entity_id = :u", { u: p.user.id })).toBe(1);
-    // Expiration du blocage : la connexion redevient possible.
-    await sequelize.query("UPDATE users SET locked_until = now() - interval '1 minute' WHERE id = :u", { replacements: { u: p.user.id } });
+    // F5 : le blocage vise l'adresse IP de l'attaquant, pas le titulaire.
+    const ailleurs = await api().post(CONNEXION).set('X-Forwarded-For', '10.20.30.40').send({ identifiant: p.identifiants.email, password: MOT_DE_PASSE });
+    expect(ailleurs.status).toBe(200);
+    // Expiration du blocage (fenêtre écoulée) : la connexion redevient possible depuis l'IP bloquée.
+    await require('../../../../utils/cache.js').invalider(`echecs_connexion:${p.user.id}:*`);
     expect((await connecter(p.identifiants.email)).status).toBe(200);
+  });
+
+  test('F5 : 20 échecs depuis des IP différentes → compte verrouillé en base (attaque distribuée)', async () => {
+    const p = await nouveauProprietaire();
+    for (let i = 0; i < 20; i += 1) {
+      await api().post(CONNEXION).set('X-Forwarded-For', `10.9.${Math.floor(i / 4)}.${i}`).send({ identifiant: p.identifiants.email, password: 'Mauvais123' });
+    }
+    const [[ligne]] = await sequelize.query('SELECT locked_until FROM users WHERE id = :u', { replacements: { u: p.user.id } });
+    expect(ligne.locked_until).not.toBeNull();
+    expect((await api().post(CONNEXION).set('X-Forwarded-For', '10.200.0.1').send({ identifiant: p.identifiants.email, password: MOT_DE_PASSE })).status).toBe(401);
   });
 
   test('verrouillage : 5 échecs SIMULTANÉS comptent tous (incrément atomique)', async () => {
     const p = await nouveauProprietaire();
     await Promise.all(Array.from({ length: 5 }, () => connecter(p.identifiants.email, 'Mauvais123')));
-    // Bloqué : même le bon mot de passe est refusé (réponse générique).
+    // Bloqué depuis cette IP : même le bon mot de passe est refusé (réponse générique).
     expect((await connecter(p.identifiants.email)).body.error.code).toBe('IDENTIFIANTS_INVALIDES');
-    expect((await sequelize.query('SELECT locked_until FROM users WHERE id = :u', { replacements: { u: p.user.id } }))[0][0].locked_until).not.toBeNull();
+    expect((await sequelize.query('SELECT failed_login_attempts FROM users WHERE id = :u', { replacements: { u: p.user.id } }))[0][0].failed_login_attempts).toBe(5);
   });
 
   test('compte désactivé : 403 COMPTE_INACTIF seulement avec le bon mot de passe (anti-énumération)', async () => {

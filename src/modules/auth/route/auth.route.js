@@ -8,6 +8,8 @@ const v = require('../validation/auth.validation.js');
 const { limiteActivation } = require('./limiteActivation.js');
 
 // § 5 — Authentification. Routes publiques, toutes limitées en débit.
+// E2 : code de vérification du téléphone (WhatsApp), limité par IP ET par numéro.
+router.post('/inscription/code', authRateLimit, otpCibleRateLimit, validate(v.codeInscriptionSchema), ctrl.demanderCodeInscription);
 router.post('/inscription', authRateLimit, validate(v.inscriptionSchema), ctrl.inscription);
 router.post('/connexion', authRateLimit, validate(v.connexionSchema), ctrl.connexion);
 // Seconde étape de la connexion quand la double authentification est active.

@@ -11,6 +11,27 @@ const sequelize = require('../../config/db.js');
 const bcrypt = require('../../utils/motDePasse.js');
 const totp = require('../../utils/totp.js');
 const { encrypt } = require('../../utils/cryptoField.js');
+const whatsapp = require('../../infrastructure/whatsapp.service.js');
+
+/**
+ * Codes envoyés « par WhatsApp » (vérification du téléphone, invitation
+ * locataire — constat E2) : capturés ici au lieu de partir chez Meta. Un test
+ * lit le dernier code reçu par un numéro comme le ferait son titulaire.
+ */
+const codesWhatsapp = new Map();
+const envoyerCodeReel = whatsapp.envoyerCode;
+whatsapp.envoyerCode = async ({ telephone, code }) => {
+  codesWhatsapp.set(telephone, String(code));
+  return { id: null, simule: true };
+};
+const dernierCodeWhatsapp = (telephone) => codesWhatsapp.get(telephone) || null;
+
+/** Demande le code de vérification d'inscription pour ce numéro (E.164) et le renvoie. */
+async function codeInscription(phone) {
+  const res = await api().post('/api/v1/auth/inscription/code').send({ phone });
+  if (res.status !== 200) throw new Error(`Code d'inscription impossible : ${res.status} ${JSON.stringify(res.body)}`);
+  return dernierCodeWhatsapp(require('../../utils/telephone.js').normaliserTelephone(phone));
+}
 
 /**
  * Routes de mouvement d'argent qui EXIGENT une Idempotency-Key (comme le
@@ -26,10 +47,21 @@ const api = () => {
     const test = post(url);
     return ROUTES_IDEMPOTENCE_OBLIGATOIRE.test(String(url).split('?')[0]) ? test.set('Idempotency-Key', crypto.randomUUID()) : test;
   };
+  // M1 : la configuration d'un moyen de paiement exige le mot de passe actuel.
+  // Comme un client qui le redemande, `api()` le joint (s'il manque) ; le refus
+  // lui-même est vérifié avec `apiBrute()`.
+  const put = agent.put.bind(agent);
+  agent.put = (url) => {
+    const test = put(url);
+    if (String(url).split('?')[0] !== '/api/v1/paiements/moyens') return test;
+    const send = test.send.bind(test);
+    test.send = (corps) => send(corps && typeof corps === 'object' && !('current_password' in corps) ? { current_password: MOT_DE_PASSE, ...corps } : corps);
+    return test;
+  };
   return agent;
 };
 const apiBrute = () => request(app);
-const MOT_DE_PASSE = 'MotDePasse1';
+const MOT_DE_PASSE = 'Baobab2024Ndar';
 
 /**
  * Téléphone sénégalais UNIQUE dans la base du worker.
@@ -68,6 +100,7 @@ async function nouveauProprietaire(surcharges = {}) {
     first_name: 'Balla', last_name: 'Diop', phone: telephoneUnique(), email: emailUnique('proprio'),
     password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE, ...surcharges,
   };
+  if (!corps.code) corps.code = await codeInscription(corps.phone);
   const res = await api().post('/api/v1/auth/inscription').send(corps);
   if (res.status !== 201) throw new Error(`Inscription impossible : ${res.status} ${JSON.stringify(res.body)}`);
   const [[membre]] = await sequelize.query('SELECT owner_id FROM owner_members WHERE user_id = :id', { replacements: { id: res.body.data.user.id } });
@@ -161,7 +194,7 @@ async function activerLocataire(proprio, tenant) {
   const inv = await api().post(`/api/v1/locataires/${tenant.id}/invitation`).set(proprio.h).send({});
   if (inv.status !== 201) throw new Error(`Invitation : ${inv.status} ${JSON.stringify(inv.body)}`);
   const res = await api().post('/api/v1/auth/locataire/activation').send({
-    code: inv.body.data.invitation.code, phone: tenant.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
+    code: dernierCodeWhatsapp(tenant.phone), phone: tenant.phone, password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
   });
   if (res.status !== 201) throw new Error(`Activation locataire : ${res.status} ${JSON.stringify(res.body)}`);
   return { token: res.body.data.access_token, h: bearer(res.body.data.access_token), user: res.body.data.user };
@@ -222,4 +255,5 @@ module.exports = {
   nouveauProprietaire, superAdmin, codeTotp, creerImmeuble, creerAppartement, creerLocataire,
   desactiverEdlObligatoire, bailActif, activerLocataire, fermer, sequelize,
   echeancesDu, payerEspeces, pngTest, proprietaireEtLocataire, expirerAbonnement, publierModeleBail, compter,
+  codeInscription, dernierCodeWhatsapp, envoyerCodeReel,
 };

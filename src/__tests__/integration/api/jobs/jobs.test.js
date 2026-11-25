@@ -112,6 +112,7 @@ describe('nettoyage des données techniques', () => {
       reset: await ins("INSERT INTO password_resets (user_id, otp_hash, expires_at, created_at) VALUES (:u, :h, now(), now() - interval '25 hours')", { h: hash() }),
       invitation: await ins("INSERT INTO tenant_invitations (owner_id, tenant_id, token_hash, code_hash, expires_at, created_at) VALUES (:o, :t, :h, :h2, now() - interval '91 days', now() - interval '100 days')", { o: proprio.ownerId, t: b.tenant.id, h: hash(), h2: hash() }),
       notif: await ins("INSERT INTO notifications (user_id, type, title, body, read_at, created_at) VALUES (:u, 'incident', 'x', 'y', now() - interval '13 months', now() - interval '13 months')"),
+      verif_tel: await ins("INSERT INTO phone_verifications (phone, purpose, code_hash, expires_at, created_at) VALUES ('+221770000001', 'inscription', :h, now() - interval '25 hours', now() - interval '25 hours')", { h: hash() }),
     };
     const valides = {
       refresh: await ins("INSERT INTO refresh_tokens (user_id, token_hash, expires_at, revoked_at) VALUES (:u, :h, now() - interval '29 days', now() - interval '29 days')", { h: hash() }),
@@ -124,7 +125,7 @@ describe('nettoyage des données techniques', () => {
     };
 
     const bilan = await nettoyer();
-    expect(Object.keys(bilan).sort()).toEqual(['idempotency_keys', 'notifications', 'password_resets', 'refresh_tokens', 'tenant_invitations']);
+    expect(Object.keys(bilan).sort()).toEqual(['idempotency_keys', 'notifications', 'password_resets', 'phone_verifications', 'refresh_tokens', 'tenant_invitations']);
     expect(bilan.refresh_tokens).toBeGreaterThanOrEqual(2);
     for (const n of Object.values(bilan)) expect(n).toBeGreaterThanOrEqual(1);
 
@@ -135,6 +136,7 @@ describe('nettoyage des données techniques', () => {
     expect(await existe('password_resets', echus.reset)).toBe(false);
     expect(await existe('tenant_invitations', echus.invitation)).toBe(false);
     expect(await existe('notifications', echus.notif)).toBe(false);
+    expect(await existe('phone_verifications', echus.verif_tel)).toBe(false);
 
     expect(await existe('refresh_tokens', valides.refresh)).toBe(true);
     expect(await existe('idempotency_keys', valides.idem)).toBe(true);
@@ -187,7 +189,7 @@ describe('planificateur : chaque tâche s’exécute sans erreur sur une base pe
   test('la liste des tâches est complète et chaque planification est une expression cron valide', () => {
     const cron = require('node-cron');
     expect(TACHES.map((t) => t.nom).sort()).toEqual(
-      ['abonnements', 'cautions', 'echeances', 'etats_des_lieux', 'expiration_paiements', 'nettoyage', 'quittances_manquantes', 'relances'].sort()
+      ['abonnements', 'cautions', 'echeances', 'etats_des_lieux', 'expiration_paiements', 'nettoyage', 'quittances_manquantes', 'relances', 'retention'].sort()
     );
     for (const t of TACHES) expect(cron.validate(t.planification)).toBe(true);
   });

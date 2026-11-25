@@ -8,7 +8,7 @@ const sequelize = require('../config/db.js');
  *
  *   - refresh tokens expirés ou révoqués depuis plus de 30 jours ;
  *   - clés d'idempotence expirées ;
- *   - codes de réinitialisation de plus de 24 h ;
+ *   - codes de réinitialisation et de vérification du téléphone de plus de 24 h ;
  *   - invitations expirées ou utilisées depuis plus de 90 jours ;
  *   - notifications LUES de plus de 12 mois.
  *
@@ -29,6 +29,7 @@ const REQUETES = {
        LIMIT :taille)`,
   idempotency_keys: 'DELETE FROM idempotency_keys WHERE id IN (SELECT id FROM idempotency_keys WHERE expires_at < now() LIMIT :taille)',
   password_resets: "DELETE FROM password_resets WHERE id IN (SELECT id FROM password_resets WHERE created_at < now() - interval '24 hours' LIMIT :taille)",
+  phone_verifications: "DELETE FROM phone_verifications WHERE id IN (SELECT id FROM phone_verifications WHERE created_at < now() - interval '24 hours' LIMIT :taille)",
   tenant_invitations: `DELETE FROM tenant_invitations WHERE id IN (
       SELECT id FROM tenant_invitations
        WHERE COALESCE(used_at, revoked_at, expires_at) < now() - interval '90 days' LIMIT :taille)`,

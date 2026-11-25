@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const {
-  api, superAdmin, nouveauProprietaire, telephoneUnique, emailUnique, MOT_DE_PASSE, compter, fermer, sequelize,
+  api, superAdmin, nouveauProprietaire, telephoneUnique, emailUnique, MOT_DE_PASSE, compter, fermer, sequelize, codeInscription,
 } = require('../../../setup/helpers.js');
 
 /**
@@ -130,8 +130,9 @@ describe('Statut et suppression', () => {
       expect(res.body.error.code).toBe('PLAN_ESSAI');
       expect(await compter('subscription_plans', 'id = :id', { id: plan.id })).toBe(1);
       // Les inscriptions continuent de recevoir un essai sur ce plan.
+      const phone = telephoneUnique();
       const inscription = await api().post('/api/v1/auth/inscription').send({
-        first_name: 'A', last_name: 'B', phone: telephoneUnique(), email: emailUnique(), password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE,
+        first_name: 'A', last_name: 'B', phone, email: emailUnique(), password: MOT_DE_PASSE, password_confirmation: MOT_DE_PASSE, code: await codeInscription(phone),
       });
       expect(inscription.status).toBe(201);
       expect(await compter('subscriptions s JOIN owner_members m ON m.owner_id = s.owner_id', 'm.user_id = :u AND s.plan_id = :p', { u: inscription.body.data.user.id, p: plan.id })).toBe(1);

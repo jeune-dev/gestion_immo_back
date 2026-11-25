@@ -8,11 +8,19 @@ const inscriptionSchema = Joi.object({
   last_name: nom.required(),
   phone: telephone.required(),
   email: email.required(),
+  // E2 : code reçu par WhatsApp (POST /auth/inscription/code).
+  code: Joi.string().trim().pattern(/^\d{6}$/).required()
+    .messages({ 'string.pattern.base': 'Le code de vérification contient 6 chiffres', 'any.required': 'Le code de vérification reçu par WhatsApp est requis' }),
   password: motDePasse.required(),
   password_confirmation: Joi.any().valid(Joi.ref('password')).required()
     .messages({ 'any.only': 'La confirmation du mot de passe ne correspond pas' }),
   company_name: Joi.string().trim().max(150).allow('', null),
   city: Joi.string().trim().max(100).allow('', null),
+});
+
+// E2 — demande du code de vérification du téléphone (envoyé par WhatsApp).
+const codeInscriptionSchema = Joi.object({
+  phone: telephone.required(),
 });
 
 // § 5 — connexion par téléphone OU email.
@@ -71,6 +79,6 @@ const mfaSchema = Joi.object({
 }).xor('code', 'code_secours').messages({ 'object.xor': 'Fournissez soit le code de vérification, soit un code de secours' });
 
 module.exports = {
-  inscriptionSchema, connexionSchema, refreshSchema, deconnexionSchema,
+  inscriptionSchema, codeInscriptionSchema, connexionSchema, refreshSchema, deconnexionSchema,
   motDePasseOublieSchema, reinitialisationSchema, activationSchema, mfaSchema, codeTotp, codeSecours,
 };

@@ -53,10 +53,12 @@ describe('email', () => {
 });
 
 describe('motDePasse', () => {
-  test.each(['MotDePasse1', 'Abcdefg1', `Aa1${'x'.repeat(125)}`])('« %s » accepté', (v) => {
+  test.each(['Baobab2024Ndar', 'Gorée-Ile7x', `Aa1${'x'.repeat(125)}`])('« %s » accepté', (v) => {
     expect(valider(motDePasse, v).error).toBeUndefined();
   });
-  test.each(['Court1a', 'sansmajuscule1', 'SANSMINUSCULE1', 'SansChiffre', `Aa1${'x'.repeat(126)}`])('« %s » refusé', (v) => {
+  // M3 : 10 caractères minimum et motifs courants refusés.
+  test.each(['Court1a', 'Abcdefg1', 'Neuf9Abcd', 'sansmajuscule1', 'SANSMINUSCULE1', 'SansChiffre', `Aa1${'x'.repeat(126)}`,
+    'MotDePasse1', 'Azerty12345', 'Password2024', 'Teranga2026x', 'Aa123456789'])('« %s » refusé', (v) => {
     expect(valider(motDePasse, v).error).toBeDefined();
   });
 });

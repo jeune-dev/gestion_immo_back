@@ -23,6 +23,7 @@ const Subscription = require('./subscription.model.js');
 const SubscriptionPayment = require('./subscriptionPayment.model.js');
 const RefreshToken = require('./refreshToken.model.js');
 const PasswordReset = require('./passwordReset.model.js');
+const PhoneVerification = require('./phoneVerification.model.js');
 const DeviceToken = require('./deviceToken.model.js');
 const PlatformSetting = require('./platformSetting.model.js');
 const IdempotencyKey = require('./idempotencyKey.model.js');
@@ -198,7 +199,7 @@ InspectionPhoto.belongsTo(Document, fk('document_id', 'document'));
 module.exports = {
   sequelize,
   Role, User, Owner, OwnerMember, SubscriptionPlan, Subscription, SubscriptionPayment,
-  RefreshToken, PasswordReset, DeviceToken, PlatformSetting, IdempotencyKey, Counter,
+  RefreshToken, PasswordReset, PhoneVerification, DeviceToken, PlatformSetting, IdempotencyKey, Counter,
   AuditLog, Notification, WhatsappTemplate, Document, MessageDelivery,
   Building, Apartment, Tenant, TenantInvitation, LeaseTemplate, Lease, LeaseDocument,
   Contractor, Incident, WorkOrder, WorkOrderEvent, WorkPhoto, MessageThread, Message,

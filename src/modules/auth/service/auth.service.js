@@ -20,6 +20,19 @@ const { journaliser } = require('../../audit/service/audit.service.js');
 const logger = require('../../../utils/logger.js');
 const { alerter, TYPES } = require('../../../infrastructure/alertes.service.js');
 const { comparerTempsConstant } = require('../../../infrastructure/paiement/signature.js');
+const { empreinteOtp, genererCode } = require('../../../utils/otp.js');
+const verificationTelephone = require('./verificationTelephone.service.js');
+const cache = require('../../../utils/cache.js');
+
+/**
+ * Constat F5 : le verrouillage après 5 échecs, compté par COMPTE, permettait
+ * à n'importe qui de bloquer le titulaire (déni de service ciblé). Les échecs
+ * sont désormais comptés par COMPTE + IP : l'attaquant ne bloque que lui-même.
+ * Le compteur global en base garde un seuil plus haut (attaque distribuée).
+ */
+const cleEchecs = (userId, ip) => `echecs_connexion:${userId}:${ip || 'inconnue'}`;
+const ipBloquee = async (userId, ip) => Number(await cache.lire(cleEchecs(userId, ip)) || 0) >= verrouillageConfig.maxTentatives;
+const oublierEchecs = (userId) => cache.invalider(`echecs_connexion:${userId}:*`);
 
 // Empreinte bcrypt factice (même coût que les vraies) : égalise le temps de
 // réponse quand le compte n'existe pas (anti-énumération par chronométrage,
@@ -74,13 +87,18 @@ function critereIdentifiant(identifiant) {
  * appartenance et abonnement d'essai (§ 31) dans UNE transaction.
  */
 async function inscrireProprietaire(donnees, meta) {
+  // E2 : preuve de possession du numéro (code WhatsApp) AVANT tout le reste.
+  await verificationTelephone.verifierCode(donnees.phone, donnees.code, 'inscription');
+
   const existe = await User.findOne({
     where: { [Op.or]: [sequelize.where(sequelize.fn('lower', sequelize.col('email')), donnees.email), { phone: donnees.phone }] },
-    attributes: ['id', 'email', 'phone'],
+    attributes: ['id'],
   });
   if (existe) {
+    // F1 : message UNIQUE, qu'il s'agisse du téléphone ou de l'e-mail (ne
+    // confirme pas qu'une adresse donnée a un compte).
     throw new ConflictError(
-      existe.phone === donnees.phone ? 'Ce numéro de téléphone est déjà utilisé' : 'Cet e-mail est déjà utilisé',
+      'Impossible de créer un compte avec ces informations. Si vous avez déjà un compte, connectez-vous ou utilisez « mot de passe oublié ».',
       'COMPTE_EXISTANT'
     );
   }
@@ -95,6 +113,7 @@ async function inscrireProprietaire(donnees, meta) {
       last_name: donnees.last_name,
       email: donnees.email,
       phone: donnees.phone,
+      phone_verified_at: new Date(),
       password_hash: empreinte,
     }, { transaction: t });
 
@@ -146,7 +165,8 @@ async function connecter({ identifiant, password }, meta) {
     throw new UnauthorizedError(MESSAGE_ECHEC, 'IDENTIFIANTS_INVALIDES');
   }
 
-  if (user.locked_until && user.locked_until > new Date()) {
+  const ip = meta?.ip;
+  if ((user.locked_until && user.locked_until > new Date()) || await ipBloquee(user.id, ip)) {
     // Même coût et même réponse qu'un mot de passe faux (anti-énumération).
     await bcrypt.compare(password, await EMPREINTE_FACTICE());
     await tracerConnexion('compte.connexion_echec', { user, identifiant, motif: 'compte_verrouille' });
@@ -155,14 +175,18 @@ async function connecter({ identifiant, password }, meta) {
 
   const valide = await bcrypt.compare(password, user.password_hash);
   if (!valide) {
+    const echecsIp = await cache.incrementer(cleEchecs(user.id, ip), verrouillageConfig.dureeMinutes * 60);
     // Incrément ATOMIQUE en base : des essais parallèles ne se neutralisent pas.
     const [[ligne]] = await sequelize.query(
       `UPDATE users SET failed_login_attempts = failed_login_attempts + 1,
               locked_until = CASE WHEN failed_login_attempts + 1 >= :max THEN now() + (:minutes || ' minutes')::interval ELSE locked_until END
         WHERE id = :id RETURNING failed_login_attempts`,
-      { replacements: { id: user.id, max: verrouillageConfig.maxTentatives, minutes: String(verrouillageConfig.dureeMinutes) } }
+      { replacements: { id: user.id, max: verrouillageConfig.maxTentativesGlobal, minutes: String(verrouillageConfig.dureeMinutes) } }
     );
-    if (ligne?.failed_login_attempts >= verrouillageConfig.maxTentatives) {
+    if (echecsIp === verrouillageConfig.maxTentatives) {
+      await journaliser({ action: 'compte.verrouillage', entityType: 'user', entityId: user.id, acteur: user, details: { motif: 'echecs_successifs_ip' } });
+    }
+    if (ligne?.failed_login_attempts >= verrouillageConfig.maxTentativesGlobal) {
       await User.update({ failed_login_attempts: 0 }, { where: { id: user.id } });
       await journaliser({ action: 'compte.verrouillage', entityType: 'user', entityId: user.id, acteur: user, details: { motif: 'echecs_successifs' } });
       if (user.role_code === 'super_admin') {
@@ -188,6 +212,7 @@ async function connecter({ identifiant, password }, meta) {
   if (user.failed_login_attempts || user.locked_until) {
     await user.update({ failed_login_attempts: 0, locked_until: null });
   }
+  await cache.ecrire(cleEchecs(user.id, ip), 0, 1);
   const session = await sessions.ouvrirSession(user, meta);
   await tracerConnexion('compte.connexion', { user, identifiant });
   return { user, session };
@@ -212,12 +237,12 @@ async function demanderReinitialisation({ identifiant }) {
   }
 
   const { duree_minutes: minutes } = await parametres.plateforme('otp');
-  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  const code = genererCode(6);
   await sequelize.transaction(async (t) => {
     await PasswordReset.update({ used_at: new Date() }, { where: { user_id: user.id, used_at: null }, transaction: t });
     await PasswordReset.create({
       user_id: user.id,
-      otp_hash: crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${user.id}:${code}`).digest('hex'),
+      otp_hash: empreinteOtp(user.id, code),
       expires_at: new Date(Date.now() + minutes * 60 * 1000),
     }, { transaction: t });
   });
@@ -252,7 +277,7 @@ async function reinitialiserMotDePasse({ identifiant, code, password }) {
   );
   if (!comptes.length) throw refus;
 
-  const attendu = crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${user.id}:${code}`).digest('hex');
+  const attendu = empreinteOtp(user.id, code);
   if (!comparerTempsConstant(attendu, demande.otp_hash)) throw refus;
 
   const empreinte = await bcrypt.hash(password, bcryptConfig.saltRounds);
@@ -268,6 +293,8 @@ async function reinitialiserMotDePasse({ identifiant, code, password }) {
     await sessions.revoquerToutesLesSessions(user.id, t);
     await journaliser({ action: 'compte.reinitialisation_mot_de_passe', entityType: 'user', entityId: user.id, acteur: user }, t);
   });
+  // Le titulaire qui a prouvé son identité est débloqué partout (F5).
+  await oublierEchecs(user.id);
 }
 
 /**
@@ -326,15 +353,18 @@ async function activerAvecInvitation(invitationId, { token, password }, meta, re
       }
       if (user.status !== 'actif') throw new ForbiddenError('Votre compte est désactivé. Contactez le support.', 'COMPTE_INACTIF');
     } else {
-      const emailLibre = tenant.email
-        ? !(await User.findOne({ where: sequelize.where(sequelize.fn('lower', sequelize.col('email')), tenant.email.toLowerCase()), transaction: t }))
-        : false;
+      // E2 : l'e-mail de la fiche locataire est saisi par le BAILLEUR, jamais
+      // vérifié : il n'est plus recopié dans le compte (il servirait à la
+      // réinitialisation du mot de passe — prise de contrôle possible). Le
+      // téléphone, lui, est prouvé : le code d'activation n'est envoyé que
+      // sur le WhatsApp de ce numéro.
       user = await User.create({
         role_code: 'locataire',
         first_name: tenant.first_name,
         last_name: tenant.last_name,
         phone: tenant.phone,
-        email: emailLibre ? tenant.email : null,
+        email: null,
+        phone_verified_at: new Date(),
         password_hash: await bcrypt.hash(password, bcryptConfig.saltRounds),
       }, { transaction: t });
     }

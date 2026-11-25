@@ -2,7 +2,7 @@
 
 const {
   api, nouveauProprietaire, superAdmin, creerLocataire, bailActif, activerLocataire, proprietaireEtLocataire,
-  telephoneUnique, emailUnique, compter, fermer, sequelize,
+  telephoneUnique, emailUnique, compter, fermer, sequelize, dernierCodeWhatsapp,
 } = require('../../../setup/helpers.js');
 
 /**
@@ -34,14 +34,15 @@ describe('Création', () => {
     expect(JSON.stringify(audit.details)).not.toContain('5678');
   });
 
-  test('option A : invitation créée à la création (code 8 chiffres + lien), canal manuel sans e-mail', async () => {
+  test('option A : invitation créée à la création, code envoyé au WhatsApp du locataire, jamais au propriétaire (E2)', async () => {
     const p = await nouveauProprietaire();
     const res = await creer(p, { send_invitation: true });
     expect(res.status).toBe(201);
-    expect(res.body.data.invitation).toMatchObject({ code: expect.stringMatching(/^\d{8}$/), token: expect.any(String), canal: 'manuel' });
-    const [[inv]] = await sequelize.query('SELECT token_hash, code_hash FROM tenant_invitations WHERE tenant_id = :t', { replacements: { t: res.body.data.tenant.id } });
-    expect(inv.token_hash).not.toBe(res.body.data.invitation.token);
-    expect(inv.code_hash).not.toContain(res.body.data.invitation.code);
+    expect(res.body.data.invitation).toEqual({ expires_at: expect.any(String), canal: 'whatsapp' });
+    const code = dernierCodeWhatsapp(res.body.data.tenant.phone);
+    expect(code).toMatch(/^\d{8}$/);
+    const [[inv]] = await sequelize.query('SELECT code_hash FROM tenant_invitations WHERE tenant_id = :t', { replacements: { t: res.body.data.tenant.id } });
+    expect(inv.code_hash).not.toContain(code);
   });
 
   test('consentement WhatsApp déclaré à la création : horodaté', async () => {
@@ -169,7 +170,7 @@ describe('Invitation (§ 5 option A)', () => {
     const t = await creerLocataire(p);
     const i1 = await api().post(`${URL}/${t.id}/invitation`).set(p.h).send({});
     expect(i1.status).toBe(201);
-    expect(i1.body.data.invitation).toMatchObject({ code: expect.stringMatching(/^\d{8}$/), expires_at: expect.any(String) });
+    expect(i1.body.data.invitation).toEqual({ expires_at: expect.any(String), canal: 'whatsapp' });
     await api().post(`${URL}/${t.id}/invitation`).set(p.h).send({});
     expect(await compter('tenant_invitations', 'tenant_id = :t AND revoked_at IS NULL AND used_at IS NULL', { t: t.id })).toBe(1);
     expect(await compter('audit_logs', "action = 'locataire.invitation' AND entity_id = :t", { t: t.id })).toBe(2);

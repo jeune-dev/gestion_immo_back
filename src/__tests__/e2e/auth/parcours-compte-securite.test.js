@@ -42,7 +42,7 @@ describe('E2E — compte et sessions', () => {
       `UPDATE password_resets SET otp_hash = :h WHERE id = (SELECT id FROM password_resets WHERE user_id = :u ORDER BY created_at DESC LIMIT 1)`,
       { replacements: { u: p.user.id, h: crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${p.user.id}:${code}`).digest('hex') } }
     );
-    const nouveau = 'NouveauMotDePasse7';
+    const nouveau = 'NouvelleCleBaobab7';
     expect((await api().post('/api/v1/auth/reinitialiser-mot-de-passe').send({ identifiant: email, code, password: nouveau, password_confirmation: nouveau })).status).toBe(200);
     // Code à usage unique, anciennes sessions et jetons révoqués.
     expect((await api().post('/api/v1/auth/reinitialiser-mot-de-passe').send({ identifiant: email, code, password: nouveau, password_confirmation: nouveau })).status).toBe(400);

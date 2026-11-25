@@ -20,9 +20,30 @@ const telephone = Joi.string().trim().max(25).custom((valeur, aide) => {
 
 const email = Joi.string().trim().lowercase().max(254).email({ tlds: { allow: false } });
 
-const motDePasse = Joi.string().min(8).max(128)
+/**
+ * Politique des mots de passe (constat M3 de l'audit, NIST SP 800-63B) :
+ * 10 caractères minimum, majuscule + minuscule + chiffre, et refus des
+ * motifs les plus devinés (listes de fuites, clavier, nom du service).
+ * Ne s'applique qu'aux NOUVEAUX mots de passe : la connexion n'y est pas
+ * soumise, les comptes existants continuent de fonctionner.
+ */
+const MOTIFS_MOT_DE_PASSE_COURANTS = [
+  'password', 'passw0rd', 'motdepasse', 'azerty', 'qwerty', 'azertyuiop', 'qwertyuiop', '123456', '654321',
+  'abcdef', 'abc123', 'iloveyou', 'bienvenue', 'welcome', 'soleil', 'changeme', 'admin', 'letmein',
+  'teranga', 'kerimmo', '000000', '111111', '123123',
+];
+const motDePasse = Joi.string().min(10).max(128)
   .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-  .message('{{#label}} doit contenir au moins 8 caractères, une majuscule, une minuscule et un chiffre');
+  .custom((valeur, aide) => {
+    const bas = valeur.toLowerCase();
+    return MOTIFS_MOT_DE_PASSE_COURANTS.some((m) => bas.includes(m))
+      ? aide.message('{{#label}} est trop courant ou prévisible (évitez « motdepasse », « azerty », « 123456 », le nom du service…)')
+      : valeur;
+  })
+  .messages({
+    'string.min': '{{#label}} doit contenir au moins 10 caractères',
+    'string.pattern.base': '{{#label}} doit contenir au moins 10 caractères, une majuscule, une minuscule et un chiffre',
+  });
 
 const nom = Joi.string().trim().min(1).max(80);
 
@@ -66,6 +87,6 @@ const pagination = {
 };
 
 module.exports = {
-  Joi, uuid, telephone, email, motDePasse, nom, montant, montantPositif, dateIso,
+  Joi, uuid, telephone, email, motDePasse, MOTIFS_MOT_DE_PASSE_COURANTS, nom, montant, montantPositif, dateIso,
   texteCourt, texteLong, paramId, tri, recherche, pagination,
 };

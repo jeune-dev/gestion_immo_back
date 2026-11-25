@@ -4,6 +4,7 @@ const asyncHandler = require('../../../middlewares/asyncHandler.js');
 const { ok, created, paginated } = require('../../../utils/response.js');
 const S = require('../service/paiement.service.js');
 const R = require('../service/rapprochement.service.js');
+const Mfa = require('../../auth/service/mfa.service.js');
 
 exports.lister = asyncHandler(async (req, res) => paginated(res, await S.lister(req.ownerId, req.query, req.pagination), req.pagination));
 exports.detail = asyncHandler(async (req, res) => ok(res, { payment: await S.detail(req.params.id, req.ownerId) }));
@@ -21,4 +22,10 @@ exports.resoudre = asyncHandler(async (req, res) => ok(res, await R.resoudre(req
 exports.rejeterRapprochement = asyncHandler(async (req, res) => ok(res, { entry: await R.rejeter(req.ownerId, req.user, req.params.id, req.body) }, 'Entrée rejetée'));
 
 exports.moyens = asyncHandler(async (req, res) => ok(res, { providers: await S.moyens(req.ownerId) }));
-exports.configurerMoyen = asyncHandler(async (req, res) => ok(res, { provider: await S.configurerMoyen(req.ownerId, req.body) }, 'Moyen de paiement enregistré'));
+// M1 : changer un moyen de paiement (où arrive l'argent des loyers) exige de
+// se ré-authentifier — une session volée ne suffit pas à détourner les loyers.
+exports.configurerMoyen = asyncHandler(async (req, res) => {
+  const { current_password: motDePasse, code, code_secours: codeSecours, ...moyen } = req.body;
+  await Mfa.exigerReauthentification(req.user.id, { current_password: motDePasse, code, code_secours: codeSecours });
+  return ok(res, { provider: await S.configurerMoyen(req.ownerId, moyen) }, 'Moyen de paiement enregistré');
+});

@@ -96,6 +96,28 @@ const invalider = async (motif) => {
 };
 
 /**
+ * Compteur à fenêtre fixe (INCR + EXPIRE à la création) : nombre d'occurrences
+ * depuis le premier événement de la fenêtre. Atomique avec Redis ; repli
+ * mémoire hors Redis (un seul processus).
+ * @returns {Promise<number>}
+ */
+const incrementer = async (cle, ttlSecondes) => {
+  if (!redisClient) {
+    const n = (lireMemoire(cle) || 0) + 1;
+    const entree = memoire.get(cle);
+    ecrireMemoire(cle, n, entree ? Math.max(1, Math.ceil((entree.expireA - Date.now()) / 1000)) : ttlSecondes);
+    return n;
+  }
+  try {
+    const [[, n]] = await redisClient.multi().incr(cle).expire(cle, ttlSecondes, 'NX').exec();
+    return Number(n);
+  } catch (err) {
+    logger.debug(`[cache] incrément échoué pour ${cle}`, { error: err.message });
+    return 0;
+  }
+};
+
+/**
  * Calcul « à vol unique » : des appels simultanés pour la MÊME clé partagent
  * un seul calcul au lieu d'en lancer un chacun.
  *
@@ -115,7 +137,7 @@ const volUnique = (cle, calcul) => {
 };
 
 module.exports = {
-  lire, ecrire, invalider, volUnique,
+  lire, ecrire, invalider, volUnique, incrementer,
   // Exposé pour les tests : taille du repli mémoire et remise à zéro.
   _memoire: { taille: () => memoire.size, vider: () => memoire.clear(), MAX_ENTREES_MEMOIRE },
 };

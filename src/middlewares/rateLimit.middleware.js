@@ -208,7 +208,7 @@ const webhookRateLimit = rateLimit({ ...webhookRateLimitConfig, ...optionsStore(
  * chacun leur propre quota (constat E2 de l'audit).
  */
 function cleCibleOtp(req) {
-  const brut = String(req.body?.identifiant || req.body?.email || req.body?.telephone || '').trim();
+  const brut = String(req.body?.identifiant || req.body?.phone || req.body?.email || req.body?.telephone || '').trim();
   if (!brut) return null;
   if (brut.includes('@')) return `email:${brut.toLowerCase()}`;
   const tel = normaliserTelephone(brut);
@@ -220,7 +220,7 @@ const otpCibleRateLimit = rateLimit({
   ...otpCibleRateLimitConfig,
   ...optionsStore('otp'),
   keyGenerator: (req, res) => cleCibleOtp(req) || ipKeyGenerator(req, res),
-  skip: (req) => !(req.body?.identifiant || req.body?.email || req.body?.telephone),
+  skip: (req) => !(req.body?.identifiant || req.body?.phone || req.body?.email || req.body?.telephone),
 });
 
 // Routes authentifiées — par UTILISATEUR (plusieurs comptes derrière la même

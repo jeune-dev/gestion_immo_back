@@ -38,8 +38,16 @@ const mfaActivationSchema = Joi.object({ code: codeTotp.required() });
 const mfaDesactivationSchema = Joi.object({ current_password: motDePasseActuel, code: codeTotp, code_secours: codeSecours })
   .xor('code', 'code_secours');
 const mfaCodesSecoursSchema = Joi.object({ current_password: motDePasseActuel, code: codeTotp.required() });
+// M4 — suppression (anonymisation) du compte : mot de passe + code 2FA si active.
+const suppressionCompteSchema = Joi.object({
+  current_password: motDePasseActuel,
+  code: codeTotp.allow('', null),
+  code_secours: codeSecours.allow('', null),
+  confirmation: Joi.string().valid('SUPPRIMER').required()
+    .messages({ 'any.only': 'Tapez SUPPRIMER pour confirmer', 'any.required': 'Tapez SUPPRIMER pour confirmer' }),
+});
 
 module.exports = {
   profilSchema, motDePasseSchema, sessionIdSchema, appareilSchema, suppressionAppareilSchema,
-  mfaInitialisationSchema, mfaActivationSchema, mfaDesactivationSchema, mfaCodesSecoursSchema,
+  mfaInitialisationSchema, mfaActivationSchema, mfaDesactivationSchema, mfaCodesSecoursSchema, suppressionCompteSchema,
 };
