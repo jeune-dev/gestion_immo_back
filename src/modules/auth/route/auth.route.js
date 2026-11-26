@@ -17,6 +17,8 @@ const auth = require('../../../middlewares/auth.middleware.js');
 router.post('/inscription/code', motDePasseOublieRateLimit, otpCibleRateLimit, validate(v.inscriptionCodeSchema), ctrl.inscriptionCode);
 router.post('/inscription/verifier-code', authRateLimit, validate(v.inscriptionVerificationSchema), ctrl.inscriptionVerifierCode);
 router.post('/inscription', authRateLimit, validate(v.inscriptionSchema), ctrl.inscription);
+// Portail KODAFRIK : le compte est-il un administrateur de Terangaloc ?
+router.post('/localiser', authRateLimit, validate(v.localiserSchema), ctrl.localiser);
 router.post('/connexion', authRateLimit, validate(v.connexionSchema), ctrl.connexion);
 router.post('/refresh', sessionRateLimit, validate(v.refreshSchema), ctrl.rafraichir);
 router.post('/deconnexion', sessionRateLimit, validate(v.deconnexionSchema), ctrl.deconnexion);

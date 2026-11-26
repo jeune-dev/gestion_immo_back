@@ -83,6 +83,8 @@ exports.inscriptionVerifierCode = asyncHandler(async (req, res) => {
   return ok(res, { email_token: jeton }, 'Adresse vérifiée.');
 });
 
+exports.localiser = asyncHandler(async (req, res) => ok(res, await AuthService.localiser(req.body)));
+
 exports.connexion = asyncHandler(async (req, res) => {
   const resultat = await AuthService.connecter(req.body, meta(req));
   return repondreSession(req, res, resultat, 'Connexion réussie');

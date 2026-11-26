@@ -41,6 +41,11 @@ const inscriptionSchema = Joi.object({
 });
 
 // § 5 — connexion par téléphone OU email.
+// Portail KODAFRIK : le compte existe-t-il ici ?
+const localiserSchema = Joi.object({
+  identifiant: Joi.string().trim().max(254).required(),
+});
+
 const connexionSchema = Joi.object({
   // Borné : une chaîne géante n'atteint jamais la détection e-mail/téléphone.
   identifiant: Joi.string().trim().max(254).required(),
@@ -99,7 +104,7 @@ const codeAccesSchema = Joi.object({
 });
 
 module.exports = {
-  codeAccesSchema,
+  codeAccesSchema, localiserSchema,
   inscriptionSchema, connexionSchema, refreshSchema, deconnexionSchema,
   inscriptionCodeSchema, inscriptionVerificationSchema,
   motDePasseOublieSchema, verificationCodeSchema, reinitialisationSchema, activationSchema,

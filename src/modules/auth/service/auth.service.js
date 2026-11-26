@@ -163,6 +163,26 @@ async function inscrireProprietaire(donnees, meta) {
  * successifs (§ 32 anti force brute) et réponses indiscernables pour un compte
  * inexistant.
  */
+/**
+ * Portail KODAFRIK : « ce compte a-t-il accès à l'administration Terangaloc ? »
+ *
+ * Le portail ne présente le mot de passe qu'aux espaces qui connaissent le
+ * compte, et propose d'aligner un ancien mot de passe là où il diffère. Sans
+ * cette réponse, un mot de passe Terangaloc différent passait pour « pas de
+ * compte ici » : la vue d'ensemble s'ouvrait sans Terangaloc.
+ *
+ * Seuls les super admins actifs sont « connus » : un propriétaire ou un
+ * locataire n'entre pas par le back-office, et un compte désactivé répond
+ * comme un inconnu (rien à apprendre en tâtonnant).
+ */
+async function localiser({ identifiant }) {
+  const critere = critereIdentifiant(identifiant);
+  const user = critere
+    ? await User.findOne({ where: critere, attributes: ['id', 'role_code', 'status'] })
+    : null;
+  return { connu: Boolean(user && user.status === 'actif' && user.role_code === 'super_admin') };
+}
+
 async function connecter({ identifiant, password }, meta) {
   const critere = critereIdentifiant(identifiant);
   const user = critere ? await User.findOne({ where: critere }) : null;
@@ -393,5 +413,5 @@ async function activerAvecInvitation(invitationId, { token, password }, meta, re
 }
 
 module.exports = {
-  inscrireProprietaire, connecter, demanderReinitialisation, verifierCodeReinitialisation, reinitialiserMotDePasse, activerLocataire, critereIdentifiant,
+  inscrireProprietaire, localiser, connecter, demanderReinitialisation, verifierCodeReinitialisation, reinitialiserMotDePasse, activerLocataire, critereIdentifiant,
 };

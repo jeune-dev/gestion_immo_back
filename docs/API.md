@@ -75,6 +75,7 @@ Variables d'exploitation : `RELANCES_TAILLE_LOT` (défaut 1000) — les relances
 | Méthode | Chemin |
 |---|---|
 | POST | `/api/v1/auth/inscription` |
+| POST | `/api/v1/auth/localiser` (portail KODAFRIK : `{ identifiant }` → `{ connu }`, super admins actifs seulement) |
 | POST | `/api/v1/auth/connexion` |
 | POST | `/api/v1/auth/refresh` |
 | POST | `/api/v1/auth/deconnexion` |
