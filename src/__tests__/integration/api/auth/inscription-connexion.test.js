@@ -33,7 +33,7 @@ describe('Auth — inscription', () => {
     expect(d.user).toEqual({
       id: expect.any(String), role: 'proprietaire', first_name: 'Awa', last_name: 'Fall', email: corps.email,
       phone: corps.phone, status: 'actif', language: 'fr', must_change_password: false,
-      mfa_active: false, mfa_a_configurer: false,
+      mfa_active: false, mfa_a_configurer: false, admin_permissions: null,
     });
 
     const [[owner]] = await sequelize.query('SELECT o.* FROM owners o JOIN owner_members m ON m.owner_id = o.id WHERE m.user_id = :u', { replacements: { u: d.user.id } });

@@ -189,6 +189,22 @@ async function superAdmin({ code = true } = {}) {
   };
 }
 
+/**
+ * Ouvre l'administration à un super admin déjà connecté : pose son code
+ * d'accès (exigé par /admin) et le vérifie. Rend l'en-tête du jeton qui
+ * porte le code vérifié.
+ */
+async function ouvrirAdministration(userId, h) {
+  await sequelize.query(
+    `INSERT INTO code_acces_admin (user_id, code_hash) VALUES (:id, :h)
+     ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash, echecs = 0, bloque_jusqua = NULL`,
+    { replacements: { id: userId, h: await bcrypt.hash(CODE_ACCES, 4) } },
+  );
+  const v = await api().post('/api/v1/auth/code-acces/verifier').set(h).send({ code: CODE_ACCES });
+  if (!v.body.data?.access_token) throw new Error(`Code d'accès : ${v.status} ${JSON.stringify(v.body)}`);
+  return bearer(v.body.data.access_token);
+}
+
 async function creerImmeuble(proprio, surcharges = {}) {
   const res = await api().post('/api/v1/immeubles').set(proprio.h)
     .send({ name: `Résidence ${crypto.randomBytes(3).toString('hex')}`, address: 'Route des Almadies', city: 'Dakar', floors_count: 4, ...surcharges });
@@ -307,7 +323,7 @@ async function fermer() {
 
 module.exports = {
   api, apiBrute, bearer, MOT_DE_PASSE, telephoneUnique, emailUnique,
-  nouveauProprietaire, superAdmin, creerImmeuble, creerAppartement, creerLocataire,
+  nouveauProprietaire, superAdmin, ouvrirAdministration, creerImmeuble, creerAppartement, creerLocataire,
   desactiverEdlObligatoire, bailActif, activerLocataire, fermer, sequelize, reperes, bailRelatif,
   attendreArrierePlan: arrierePlan.attendre,
   echeancesDu, payerEspeces, pngTest, proprietaireEtLocataire, expirerAbonnement, publierModeleBail, compter,

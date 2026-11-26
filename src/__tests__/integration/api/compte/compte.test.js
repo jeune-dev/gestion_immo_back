@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, bearer, MOT_DE_PASSE, nouveauProprietaire, superAdmin, proprietaireEtLocataire, emailUnique, compter, fermer, sequelize, pngTest,
+  api, bearer, MOT_DE_PASSE, nouveauProprietaire, superAdmin, proprietaireEtLocataire, emailUnique, compter, fermer, sequelize, pngTest, ouvrirAdministration,
 } = require('../../../setup/helpers.js');
 const email = require('../../../../infrastructure/email.service.js');
 
@@ -275,9 +275,13 @@ describe('CORRECTIF mot de passe provisoire (must_change_password)', () => {
 
     const change = await changerMdp(h, provisoire, 'Zt7$pWq4!nBv');
     expect(change.status).toBe(200);
-    // Mot de passe changé : l'administration s'ouvre (plus de double authentification).
+    // Mot de passe changé : reste le code d'accès (plus de double authentification).
     const h2 = bearer(change.body.data.access_token);
-    expect((await api().get('/api/v1/admin/dashboard').set(h2)).status).toBe(200);
+    const sansCode = await api().get('/api/v1/admin/dashboard').set(h2);
+    expect(sansCode.status).toBe(403);
+    expect(sansCode.body.error.code).toBe('CODE_ACCES_REQUIS');
+    const h3 = await ouvrirAdministration(connexion.body.data.user.id, h2);
+    expect((await api().get('/api/v1/admin/dashboard').set(h3)).status).toBe(200);
   });
 
   test('déconnexion possible avec un mot de passe provisoire', async () => {

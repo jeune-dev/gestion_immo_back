@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, bearer, MOT_DE_PASSE, superAdmin, emailUnique, fermer,
+  api, bearer, MOT_DE_PASSE, superAdmin, emailUnique, fermer, ouvrirAdministration,
 } = require('../../../setup/helpers.js');
 
 /**
@@ -16,7 +16,7 @@ const NOUVEAU = 'Zt7$pWq4!nBv';
 
 afterAll(fermer);
 
-/** Crée un super admin restreint, et le connecte (mot de passe provisoire changé). */
+/** Crée un super admin restreint, et le connecte (mot de passe provisoire changé, code d'accès vérifié). */
 async function adminRestreint(admin, permissions) {
   const email = emailUnique('admin.restreint');
   const cree = await api().post(URL).set(admin.h).send({
@@ -27,7 +27,8 @@ async function adminRestreint(admin, permissions) {
   const change = await api().post('/api/v1/compte/mot-de-passe').set(bearer(connexion.body.data.access_token))
     .send({ current_password: MDP, password: NOUVEAU, password_confirmation: NOUVEAU });
   expect(change.status).toBe(200);
-  return { id: cree.body.data.user.id, h: bearer(change.body.data.access_token), user: cree.body.data.user };
+  const h = await ouvrirAdministration(cree.body.data.user.id, bearer(change.body.data.access_token));
+  return { id: cree.body.data.user.id, h, user: cree.body.data.user };
 }
 
 describe('Permissions d’un super administrateur', () => {
@@ -57,6 +58,6 @@ describe('Permissions d’un super administrateur', () => {
     expect(soi.status).toBe(409);
     expect(soi.body.error.code).toBe('ACTION_SUR_SOI_INTERDITE');
     const r = await adminRestreint(admin, null);
-    expect((await api().put(`${URL}/${r.id}/permissions`).set(admin.h).send({ permissions: ['proprietaire.tout'] })).status).toBe(400);
+    expect((await api().put(`${URL}/${r.id}/permissions`).set(admin.h).send({ permissions: ['proprietaire.tout'] })).status).toBe(422);
   });
 });
