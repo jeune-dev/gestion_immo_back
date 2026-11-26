@@ -1,6 +1,6 @@
 'use strict';
 
-/**
+/**..
  * Couverture des ROUTES par les tests : compare les routes réellement appelées
  * pendant la dernière exécution de Jest (tmp/route-hits, écrit par
  * src/__tests__/setup/routeHits.js) à la liste réelle des routes de l'API.
