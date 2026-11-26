@@ -14,6 +14,9 @@ const utilisateurs = requirePermission(P.ADMIN_UTILISATEURS);
 router.get('/utilisateurs', utilisateurs, validate(v.utilisateursSchema, 'query'), paginate(), ctrl.lister);
 router.post('/utilisateurs', utilisateurs, validate(v.superAdminSchema), ctrl.creer);
 router.get('/utilisateurs/:id', utilisateurs, validate(paramId, 'params'), ctrl.detail);
+// Back-office KODAFRIK : modifier ou supprimer un administrateur.
+router.patch('/utilisateurs/:id', utilisateurs, validate(paramId, 'params'), validate(v.modificationAdminSchema), ctrl.modifier);
+router.delete('/utilisateurs/:id', utilisateurs, validate(paramId, 'params'), ctrl.supprimer);
 // Ce que le super admin peut faire (permissions `admin.*` cochées au back-office KODAFRIK).
 router.put('/utilisateurs/:id/permissions', utilisateurs, validate(paramId, 'params'), validate(v.permissionsAdminSchema), ctrl.changerPermissions);
 // Code d'accès à quatre chiffres (portail KODAFRIK) : { code_acces: "0427" }.

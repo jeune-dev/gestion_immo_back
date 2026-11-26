@@ -123,6 +123,87 @@ async function activer(id) {
   });
 }
 
+/**
+ * Modification d'un administrateur depuis le back-office KODAFRIK : prénom,
+ * nom, e-mail, téléphone. Un e-mail ou un téléphone déjà pris par un autre
+ * compte est refusé.
+ */
+async function modifier(admin, id, { first_name: prenom, last_name: nom, email, phone }) {
+  return sequelize.transaction(async (t) => {
+    const user = await charger(id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (user.role_code !== 'super_admin') {
+      throw new ConflictError('Seuls les comptes administrateurs se modifient depuis le back-office.', 'ROLE_NON_ADMIN');
+    }
+    const changes = {};
+    if (prenom !== undefined) changes.first_name = prenom;
+    if (nom !== undefined) changes.last_name = nom;
+    if (email !== undefined && email !== user.email) changes.email = email;
+    if (phone !== undefined && phone !== user.phone) changes.phone = phone;
+
+    if (changes.email || changes.phone) {
+      const pris = await User.findOne({
+        where: {
+          id: { [Op.ne]: id },
+          [Op.or]: [
+            ...(changes.email ? [sequelize.where(sequelize.fn('lower', sequelize.col('email')), changes.email)] : []),
+            ...(changes.phone ? [{ phone: changes.phone }] : []),
+          ],
+        },
+        attributes: ['id'],
+        transaction: t,
+      });
+      if (pris) throw new ConflictError('Cet e-mail ou ce téléphone est déjà utilisé.', 'IDENTIFIANT_UTILISE');
+    }
+    if (Object.keys(changes).length) {
+      await User.update(changes, { where: { id }, transaction: t });
+      await journaliser({
+        action: 'utilisateur.modification', entityType: 'user', entityId: id,
+        details: { champs: Object.keys(changes) },
+      }, t);
+    }
+    return charger(id, { transaction: t });
+  });
+}
+
+/**
+ * Suppression d'un administrateur depuis le back-office KODAFRIK.
+ *
+ * Suppression LOGIQUE (`deleted_at`, modèle paranoïaque) : le compte ne se
+ * connecte plus, ses sessions sont fermées, son code d'accès effacé, et son
+ * e-mail et son téléphone redeviennent libres (index uniques limités aux
+ * comptes non supprimés). Le journal garde la trace de ce qu'il a fait.
+ *
+ * Seulement les super admins : un propriétaire ou un locataire porte des
+ * baux, des paiements, des quittances — il se désactive, il ne se supprime
+ * pas d'ici. Jamais soi-même, jamais le dernier super admin actif.
+ */
+async function supprimer(admin, id) {
+  if (id === admin.id) throw new ConflictError('Vous ne pouvez pas supprimer votre propre compte.', 'ACTION_SUR_SOI_INTERDITE');
+  return sequelize.transaction(async (t) => {
+    // Même verrou que la désactivation : deux suppressions croisées ne
+    // peuvent pas retirer ensemble les deux derniers super admins.
+    await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:cle))', {
+      replacements: { cle: 'users:desactivation_super_admin' }, type: QueryTypes.SELECT, transaction: t,
+    });
+    const user = await charger(id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (user.role_code !== 'super_admin') {
+      throw new ConflictError('Seuls les comptes administrateurs se suppriment depuis le back-office : désactivez ce compte.', 'ROLE_NON_ADMIN');
+    }
+    if (user.status === 'actif') {
+      const autres = await User.count({ where: { role_code: 'super_admin', status: 'actif', id: { [Op.ne]: id } }, transaction: t });
+      if (autres < 1) throw new ConflictError('Impossible de supprimer le dernier super administrateur actif.', 'DERNIER_SUPER_ADMIN');
+    }
+    await sessions.revoquerToutesLesSessions(id, t);
+    await sequelize.query('DELETE FROM code_acces_admin WHERE user_id = :id', { replacements: { id }, transaction: t });
+    await User.destroy({ where: { id }, transaction: t });
+    await journaliser({
+      action: 'utilisateur.suppression', entityType: 'user', entityId: id,
+      details: { role: user.role_code, email: user.email },
+    }, t);
+    return { id, supprime: true };
+  });
+}
+
 /** Levée du verrouillage anti force brute (§ 32) à la demande d'un utilisateur légitime. */
 async function deverrouiller(id) {
   return sequelize.transaction(async (t) => {
@@ -268,4 +349,4 @@ async function reinitialiserAcces(acteur, id, { current_password: motDePasseActe
 }
 
 module.exports = {
-  changerPermissions, changerCodeAcces, lister, detail, desactiver, activer, deverrouiller, creerSuperAdmin, reinitialiserAcces };
+  changerPermissions, changerCodeAcces, modifier, supprimer, lister, detail, desactiver, activer, deverrouiller, creerSuperAdmin, reinitialiserAcces };

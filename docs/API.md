@@ -465,6 +465,8 @@ Variables d'exploitation : `RELANCES_TAILLE_LOT` (défaut 1000) — les relances
 | POST | `/api/v1/admin/utilisateurs/:id/desactiver` |
 | POST | `/api/v1/admin/utilisateurs/:id/activer` |
 | PUT | `/api/v1/admin/utilisateurs/:id/code-acces` |
+| PATCH | `/api/v1/admin/utilisateurs/:id` (super admin : prénom, nom, e-mail, téléphone) |
+| DELETE | `/api/v1/admin/utilisateurs/:id` (super admin seulement ; ni soi-même, ni le dernier actif) |
 | POST | `/api/v1/admin/utilisateurs/:id/deverrouiller` |
 | GET | `/api/v1/admin/parametres` |
 | PUT | `/api/v1/admin/parametres/:cle` |

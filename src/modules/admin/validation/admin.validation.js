@@ -123,6 +123,14 @@ const superAdminSchema = Joi.object({
 
 const codeAccesAdminSchema = Joi.object({ code_acces: codeAcces.required() });
 
+// Modification d'un administrateur (back-office KODAFRIK) : au moins un champ.
+const modificationAdminSchema = Joi.object({
+  first_name: nom,
+  last_name: nom,
+  email,
+  phone: telephone.allow(null),
+}).min(1);
+
 const permissionsAdminSchema = Joi.object({ permissions: permissionsAdmin.required() });
 
 const reinitialisationAccesSchema = Joi.object({
@@ -228,7 +236,7 @@ const cleParametre = Joi.object({ cle: Joi.string().trim().max(80).required() })
 module.exports = {
   ownerIdParam, proprietairesSchema, motifSchema, motifFacultatifSchema, locatairesSchema, immeublesSchema,
   signalementsSchema, statistiquesSignalementsSchema, abonnementsSchema, activationSchema, paiementsSchema,
-  statistiquesLoyersSchema, utilisateursSchema, superAdminSchema, permissionsAdminSchema, codeAccesAdminSchema, reinitialisationAccesSchema, diffusionSchema,
+  statistiquesLoyersSchema, utilisateursSchema, superAdminSchema, permissionsAdminSchema, codeAccesAdminSchema, modificationAdminSchema, reinitialisationAccesSchema, diffusionSchema,
   categorieCreationSchema, categorieModificationSchema, categoriesSchema,
   planCreationSchema, planModificationSchema, plansSchema,
   modeleBailCreationSchema, modeleBailModificationSchema, modelesBailSchema, modeleWhatsappSchema,

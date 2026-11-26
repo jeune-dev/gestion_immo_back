@@ -12,6 +12,12 @@ exports.detail = asyncHandler(async (req, res) => ok(res, { user: await S.detail
 exports.creer = asyncHandler(async (req, res) =>
   created(res, { user: await S.creerSuperAdmin(req.user, req.body) }, 'Super administrateur créé'));
 
+exports.modifier = asyncHandler(async (req, res) =>
+  ok(res, { user: await S.modifier(req.user, req.params.id, req.body) }, 'Administrateur modifié'));
+
+exports.supprimer = asyncHandler(async (req, res) =>
+  ok(res, await S.supprimer(req.user, req.params.id), 'Administrateur supprimé'));
+
 exports.changerCodeAcces = asyncHandler(async (req, res) =>
   ok(res, await S.changerCodeAcces(req.user, req.params.id, req.body), "Code d'accès enregistré"));
 
