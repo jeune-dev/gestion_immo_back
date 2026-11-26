@@ -82,10 +82,10 @@ describe('garde-fous de démarrage (config/security.js)', () => {
     const { validerMotDePasseAdmin: v } = chargerSecurite(PROD);
     expect(v('Kx7!mQ2#vLp9Tz', 'boss@exemple.sn')).toBeNull();
     expect(v('', 'x')).toMatch(/requis/);
-    expect(v('Ab1!court', 'x')).toMatch(/12 caractères/);
-    expect(v('toutenminuscule1!', 'x')).toMatch(/majuscule/);
-    expect(v('Password1234!!', 'x')).toMatch(/prévisible/);
-    expect(v('Kx7!bossierXYZ', 'bossier@exemple.sn')).toMatch(/adresse e-mail/);
+    expect(v('court12', 'x')).toMatch(/8 caractères/);
+    // Plus d'exigence de caractères ni de mots interdits (26/11/2026).
+    expect(v('toutenminuscule', 'x')).toBeNull();
+    expect(v('Password1234', 'x')).toBeNull();
   });
 });
 

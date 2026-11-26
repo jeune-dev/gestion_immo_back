@@ -20,9 +20,9 @@ const telephone = Joi.string().trim().max(25).custom((valeur, aide) => {
 
 const email = Joi.string().trim().lowercase().max(254).email({ tlds: { allow: false } });
 
+// 8 caractères au moins, sans autre exigence (26/11/2026).
 const motDePasse = Joi.string().min(8).max(128)
-  .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-  .message('{{#label}} doit contenir au moins 8 caractères, une majuscule, une minuscule et un chiffre');
+  .messages({ 'string.min': '{{#label}} doit contenir au moins 8 caractères' });
 
 const nom = Joi.string().trim().min(1).max(80);
 

@@ -10,22 +10,25 @@ const ADMIN_MDP_MOTIFS_FAIBLES = [
   'password', 'motdepasse', 'azerty', 'qwerty', '123456', 'admin', 'changeme', 'bienvenue', 'immo',
 ];
 
+/** Longueur minimale d'un mot de passe, pour tous les comptes. */
+const LONGUEUR_MIN = 8;
+
 /**
- * Vérifie la robustesse d'un mot de passe super-admin. Retourne un message
- * d'erreur, ou null s'il est conforme.
+ * Mot de passe d'un super admin. Retourne un message d'erreur, ou null s'il
+ * est conforme.
+ *
+ * SIMPLIFIÉ (26/11/2026, back-office KODAFRIK) : plus d'exigence de
+ * minuscule, majuscule, chiffre ou caractère spécial, ni de liste de mots
+ * interdits — seulement 8 caractères au moins, comme pour tous les comptes.
+ * La protection de l'administration tient au code d'accès à quatre chiffres
+ * exigé par le serveur, au verrouillage après 5 échecs et à la limite de
+ * débit des connexions.
  */
-function validerMotDePasseAdmin(motDePasse, email) {
+function validerMotDePasseAdmin(motDePasse) {
   if (!motDePasse) return 'ADMIN_PASSWORD est requis.';
-  if (motDePasse.length < 12) return 'ADMIN_PASSWORD doit contenir au moins 12 caractères.';
-  if (!/[a-z]/.test(motDePasse) || !/[A-Z]/.test(motDePasse) || !/\d/.test(motDePasse) || !/[^a-zA-Z0-9]/.test(motDePasse)) {
-    return 'ADMIN_PASSWORD doit contenir une minuscule, une majuscule, un chiffre et un caractère spécial.';
-  }
-  const bas = motDePasse.toLowerCase();
-  const motif = ADMIN_MDP_MOTIFS_FAIBLES.find((m) => bas.includes(m));
-  if (motif) return `ADMIN_PASSWORD contient un motif trop prévisible (« ${motif} »).`;
-  const local = String(email || '').split('@')[0].toLowerCase();
-  if (local.length >= 4 && bas.includes(local)) return "ADMIN_PASSWORD ne doit pas contenir l'adresse e-mail.";
+  if (motDePasse.length < LONGUEUR_MIN) return `ADMIN_PASSWORD doit contenir au moins ${LONGUEUR_MIN} caractères.`;
+  if (motDePasse.length > 128) return 'ADMIN_PASSWORD ne doit pas dépasser 128 caractères.';
   return null;
 }
 
-module.exports = { validerMotDePasseAdmin, ADMIN_MDP_MOTIFS_FAIBLES };
+module.exports = { validerMotDePasseAdmin, ADMIN_MDP_MOTIFS_FAIBLES, LONGUEUR_MIN };

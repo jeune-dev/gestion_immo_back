@@ -213,7 +213,7 @@ describe('POST /compte/mot-de-passe', () => {
   });
 
   test.each([
-    ['nouveau mot de passe faible', { current_password: MOT_DE_PASSE, password: 'faible12', password_confirmation: 'faible12' }],
+    ['nouveau mot de passe trop court', { current_password: MOT_DE_PASSE, password: 'court12', password_confirmation: 'court12' }],
     ['confirmation différente', { current_password: MOT_DE_PASSE, password: NOUVEAU, password_confirmation: 'Autre1234' }],
     ['mot de passe actuel manquant', { password: NOUVEAU, password_confirmation: NOUVEAU }],
     ['corps vide', {}],

@@ -53,10 +53,11 @@ describe('email', () => {
 });
 
 describe('motDePasse', () => {
-  test.each(['MotDePasse1', 'Abcdefg1', `Aa1${'x'.repeat(125)}`])('« %s » accepté', (v) => {
+  // 8 caractères au moins, sans autre exigence (26/11/2026).
+  test.each(['MotDePasse1', 'Abcdefg1', 'sansmajuscule1', 'SANSMINUSCULE1', 'SansChiffre', `Aa1${'x'.repeat(125)}`])('« %s » accepté', (v) => {
     expect(valider(motDePasse, v).error).toBeUndefined();
   });
-  test.each(['Court1a', 'sansmajuscule1', 'SANSMINUSCULE1', 'SansChiffre', `Aa1${'x'.repeat(126)}`])('« %s » refusé', (v) => {
+  test.each(['Court1a', `Aa1${'x'.repeat(126)}`])('« %s » refusé', (v) => {
     expect(valider(motDePasse, v).error).toBeDefined();
   });
 });

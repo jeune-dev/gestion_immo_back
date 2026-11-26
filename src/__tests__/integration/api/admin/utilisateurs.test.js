@@ -96,12 +96,9 @@ describe('Création d’un super admin', () => {
     expect(JSON.stringify(audit.details)).not.toContain(MDP_ADMIN);
   });
 
+  // 8 caractères au moins, sans autre exigence (26/11/2026).
   test.each([
-    ['11 caractères', 'Xk9#vLq2!mR'],
-    ['sans caractère spécial', 'Xk9vLq2mRtAb'],
-    ['sans majuscule', 'xk9#vlq2!mrt'],
-    ['motif prévisible', 'Admin#2026xyz'],
-    ['contient la partie locale de l’e-mail', 'Mamadou#2026x'],
+    ['7 caractères', 'Court12'],
   ])('mot de passe refusé (422 MOT_DE_PASSE_FAIBLE) : %s', async (_l, password) => {
     const res = await api().post(URL).set(admin.h).send({ current_password: MOT_DE_PASSE, first_name: 'A', last_name: 'B', email: `mamadou@d${Date.now()}.sn`, password });
     expect(res.status).toBe(422);

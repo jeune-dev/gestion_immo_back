@@ -74,10 +74,10 @@ describe('Super admin initial (script d’initialisation)', () => {
     });
   });
 
-  test('aucun super admin et mot de passe d’amorçage faible : refus (politique renforcée)', async () => {
+  test('aucun super admin et mot de passe d’amorçage trop court : refus', async () => {
     await sansSuperAdmin(async () => {
       process.env.ADMIN_EMAIL = emailUnique('admin.faible');
-      process.env.ADMIN_PASSWORD = 'Password123';
+      process.env.ADMIN_PASSWORD = 'Court12';
       await expect(assurerSuperAdmin()).rejects.toThrow(/Super admin non créé/);
     });
   });

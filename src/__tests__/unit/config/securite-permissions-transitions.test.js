@@ -12,28 +12,18 @@ const enums = require('../../../config/enums.js');
  */
 
 describe('validerMotDePasseAdmin', () => {
-  test('mot de passe robuste : null', () => {
-    expect(validerMotDePasseAdmin('Xk9#vLq2!mRt', 'awa.sow@test.sn')).toBeNull();
+  // Règle simplifiée (26/11/2026) : 8 caractères au moins, rien d'autre.
+  test.each(['Xk9#vLq2!mRt', 'motdepasse', 'Admin2026', 'awasow2026'])('« %s » accepté', (mdp) => {
+    expect(validerMotDePasseAdmin(mdp, 'awa.sow@test.sn')).toBeNull();
   });
 
   test.each([
     [undefined, /requis/],
     ['', /requis/],
-    ['Xk9#vLq2!mR', /12 caractères/],
-    ['xk9#vlq2!mrt', /majuscule/],
-    ['XK9#VLQ2!MRT', /minuscule/],
-    ['Xkq#vLqz!mRt', /chiffre/],
-    ['Xk9vLq2mRtAb', /spécial/],
-    ['Password#2026', /prévisible/],
-    ['Azerty#12345x', /prévisible/],
-    ['MonImmo#2026x', /prévisible/],
+    ['court12', /8 caractères/],
+    ['x'.repeat(129), /128 caractères/],
   ])('« %s » refusé', (mdp, motif) => {
     expect(validerMotDePasseAdmin(mdp, 'x@test.sn')).toMatch(motif);
-  });
-
-  test('contenir la partie locale de l’e-mail (≥ 4 caractères) est refusé ; plus courte, toléré', () => {
-    expect(validerMotDePasseAdmin('Moussa#2026xy', 'moussa@test.sn')).toMatch(/e-mail/);
-    expect(validerMotDePasseAdmin('Xk9#abcLq2!m', 'abc@test.sn')).toBeNull();
   });
 });
 
