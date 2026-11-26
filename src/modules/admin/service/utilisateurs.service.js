@@ -11,7 +11,16 @@ const { validerMotDePasseAdmin, bcryptConfig } = require('../../../config/securi
 const bcrypt = require('../../../utils/motDePasse.js');
 const { ordre, rechercheTexte } = require('../../../utils/liste.js');
 const sessions = require('../../auth/service/session.service.js');
+const CodeAcces = require('../../auth/service/codeAcces.service.js');
 const { journaliser } = require('../../audit/service/audit.service.js');
+const { PERMISSIONS_ADMIN } = require('../../../config/permissions.js');
+
+/** Toutes les permissions cochées = pas de restriction (NULL), pour suivre les ajouts futurs. */
+const normaliserPermissions = (liste) => {
+  if (!Array.isArray(liste)) return null;
+  const uniques = [...new Set(liste)].filter((p) => PERMISSIONS_ADMIN.includes(p));
+  return PERMISSIONS_ADMIN.every((p) => uniques.includes(p)) ? null : uniques.sort();
+};
 
 /**
  * Comptes utilisateurs de la plateforme (§ 30 « Utilisateurs », § 32
@@ -24,7 +33,7 @@ const { journaliser } = require('../../audit/service/audit.service.js');
 
 const ATTRIBUTS = [
   'id', 'role_code', 'first_name', 'last_name', 'email', 'phone', 'status', 'email_verified_at',
-  'must_change_password', 'last_login_at', 'language', 'created_at', 'updated_at', 'totp_enabled_at',
+  'must_change_password', 'last_login_at', 'language', 'created_at', 'updated_at', 'totp_enabled_at', 'admin_permissions',
   [sequelize.literal('("User"."locked_until" IS NOT NULL AND "User"."locked_until" > now())'), 'is_locked'],
 ];
 
@@ -143,7 +152,7 @@ async function exigerMotDePasseActeur(acteur, motDePasse) {
  * qu'un secret provisoire. Le nouveau compte devra aussi configurer sa double
  * authentification avant tout accès à l'administration.
  */
-async function creerSuperAdmin(acteur, { first_name: prenom, last_name: nom, email, phone = null, password, current_password: motDePasseActeur }) {
+async function creerSuperAdmin(acteur, { first_name: prenom, last_name: nom, email, phone = null, password, current_password: motDePasseActeur, permissions = null, code_acces: codeAcces }) {
   await exigerMotDePasseActeur(acteur, motDePasseActeur);
   const erreur = validerMotDePasseAdmin(password, email);
   if (erreur) {
@@ -170,12 +179,48 @@ async function creerSuperAdmin(acteur, { first_name: prenom, last_name: nom, ema
       phone,
       password_hash: empreinte,
       must_change_password: true,
+      admin_permissions: normaliserPermissions(permissions),
     }, { transaction: t });
     await journaliser({
       action: 'utilisateur.creation', entityType: 'user', entityId: user.id,
-      details: { role: 'super_admin', email },
+      details: { role: 'super_admin', email, permissions: normaliserPermissions(permissions) ?? 'toutes' },
     }, t);
+    // Le code d'accès, dans la même transaction : un compte sans son code ne
+    // pourrait pas ouvrir l'administration.
+    if (codeAcces) await CodeAcces.definir(user.id, codeAcces, { auteurId: acteur.id, transaction: t });
     return charger(user.id, { transaction: t });
+  });
+}
+
+/**
+ * Code d'accès à quatre chiffres d'un super admin (portail KODAFRIK). Les
+ * sessions déjà vérifiées du compte le redemandent ; un code fixe
+ * (config/codeAcces.js) ne se change pas.
+ */
+async function changerCodeAcces(admin, id, { code_acces: code }) {
+  const r = await CodeAcces.definir(id, code, { auteurId: admin.id });
+  await journaliser({ action: 'utilisateur.code_acces', entityType: 'user', entityId: id, details: {} });
+  return r;
+}
+
+/**
+ * Ce qu'un super admin peut faire (back-office KODAFRIK). Effet immédiat :
+ * auth.middleware relit les permissions à chaque requête. On ne modifie pas
+ * les siennes (pas d'auto-promotion, pas de verrouillage de soi-même).
+ */
+async function changerPermissions(admin, id, { permissions }) {
+  if (id === admin.id) throw new ConflictError('Vous ne pouvez pas modifier vos propres permissions.', 'ACTION_SUR_SOI_INTERDITE');
+  return sequelize.transaction(async (t) => {
+    const user = await charger(id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (user.role_code !== 'super_admin') throw new ConflictError('Seuls les super administrateurs ont des permissions réglables.', 'ROLE_NON_ADMIN');
+    const avant = user.admin_permissions ?? null;
+    const apres = normaliserPermissions(permissions);
+    await User.update({ admin_permissions: apres }, { where: { id }, transaction: t });
+    await journaliser({
+      action: 'utilisateur.permissions', entityType: 'user', entityId: id,
+      details: { avant: avant ?? 'toutes', apres: apres ?? 'toutes' },
+    }, t);
+    return charger(id, { transaction: t });
   });
 }
 
@@ -222,4 +267,5 @@ async function reinitialiserAcces(acteur, id, { current_password: motDePasseActe
   });
 }
 
-module.exports = { lister, detail, desactiver, activer, deverrouiller, creerSuperAdmin, reinitialiserAcces };
+module.exports = {
+  changerPermissions, changerCodeAcces, lister, detail, desactiver, activer, deverrouiller, creerSuperAdmin, reinitialiserAcces };

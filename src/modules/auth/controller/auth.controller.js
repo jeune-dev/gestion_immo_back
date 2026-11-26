@@ -6,7 +6,6 @@ const { cookieRefresh } = require('../../../config/security.js');
 const { UnauthorizedError } = require('../../../errors/AppError.js');
 const AuthService = require('../service/auth.service.js');
 const sessions = require('../service/session.service.js');
-const MfaService = require('../service/mfa.service.js');
 const VerificationEmail = require('../service/verificationEmail.service.js');
 
 /**
@@ -37,11 +36,11 @@ function formatUtilisateur(user) {
     status: user.status,
     language: user.language,
     must_change_password: user.must_change_password,
-    mfa_active: Boolean(user.totp_enabled_at),
-    // Super admin sans double authentification : seule sa configuration est ouverte.
-    mfa_a_configurer: user.role_code === 'super_admin' && !user.totp_enabled_at
-      // Développement local uniquement (voir MFA_DESACTIVEE_DEV dans auth.middleware.js).
-      && !(process.env.NODE_ENV !== 'production' && process.env.MFA_DESACTIVEE_DEV === 'true'),
+    // Double authentification supprimée : champs gardés pour les clients existants.
+    mfa_active: false,
+    mfa_a_configurer: false,
+    // Ce que ce super admin peut faire (null = tout) : le back-office masque le reste.
+    admin_permissions: user.admin_permissions ?? null,
   };
 }
 
@@ -86,16 +85,6 @@ exports.inscriptionVerifierCode = asyncHandler(async (req, res) => {
 
 exports.connexion = asyncHandler(async (req, res) => {
   const resultat = await AuthService.connecter(req.body, meta(req));
-  if (resultat.mfa) {
-    // Double authentification : aucune session tant que le code n'est pas donné.
-    return ok(res, { mfa_requis: true, mfa_token: resultat.mfa.jeton, expires_in: resultat.mfa.expiresIn }, 'Code de vérification requis');
-  }
-  return repondreSession(req, res, resultat, 'Connexion réussie');
-});
-
-/** Seconde étape de la connexion (double authentification) : code TOTP ou code de secours. */
-exports.mfa = asyncHandler(async (req, res) => {
-  const resultat = await MfaService.finaliserConnexion(req.body, meta(req));
   return repondreSession(req, res, resultat, 'Connexion réussie');
 });
 
@@ -139,3 +128,10 @@ exports.activerLocataire = asyncHandler(async (req, res) => {
 });
 
 exports.formatUtilisateur = formatUtilisateur;
+
+/** Code d'accès du super admin : un jeton d'accès qui ouvre l'administration. */
+exports.verifierCodeAcces = asyncHandler(async (req, res) => {
+  const CodeAcces = require('../service/codeAcces.service.js');
+  const r = await CodeAcces.verifier(req.user, req.body.code, { sessionId: req.sessionId });
+  return ok(res, r, "Code d'accès vérifié");
+});

@@ -19,11 +19,9 @@ Générée depuis le routeur réel : `npm run doc:routes` (262 routes).
 
 | Situation | Réponse |
 |---|---|
-| Connexion d'un compte à double authentification active (obligatoire pour le super admin) | 200 `{ mfa_requis: true, mfa_token }` (5 min) — puis `POST /auth/mfa` `{ mfa_token, code }` ou `{ mfa_token, code_secours }` → session |
-| Super admin sans double authentification configurée | **403 MFA_REQUISE** partout sauf profil, mot de passe, `POST /compte/mfa/initialiser` et `/activer` |
-| Désactiver la double authentification d'un super admin | **403 MFA_OBLIGATOIRE** |
-| Code TOTP faux, rejoué ou expiré | **401 CODE_MFA_INVALIDE** (compte bloqué 15 min après 5 échecs) |
 | Mot de passe oublié pour un super admin | réponse identique, aucun code envoyé — accès rétabli par un autre super admin (`POST /admin/utilisateurs/:id/reinitialiser-acces`) |
+| Permissions d'un super admin (back-office KODAFRIK) | `POST /admin/utilisateurs` accepte `permissions` (codes `admin.*`, null = toutes) ; `PUT /admin/utilisateurs/:id/permissions { permissions }` (pas sur soi-même : 409 ACTION_SUR_SOI_INTERDITE) ; hors de ses permissions : **403 PERMISSION_REFUSEE** |
+| Code d'accès à quatre chiffres (portail KODAFRIK) | Exigé pour toute route `/admin` : sans lui, **403 CODE_ACCES_REQUIS**. `POST /auth/code-acces/verifier { code }` (session du super admin) → nouveau `access_token` ; la session garde le code vérifié de rotation en rotation. Code faux **401 CODE_ACCES_INCORRECT**, 5 échecs **423 CODE_ACCES_BLOQUE** (15 min), aucun code **403 CODE_ACCES_NON_DEFINI**. Posé à la création (`code_acces`) ou par `PUT /admin/utilisateurs/:id/code-acces { code_acces }` ; code fixe (config/codeAcces.js) : **409 CODE_ACCES_FIXE** |
 | Mot de passe faux | **401 IDENTIFIANTS_INVALIDES** ; aux 2 derniers essais avant blocage, le message prévient (« encore N essais ») |
 | Compte bloqué après des échecs (5 erreurs → 1 min, puis 5 min, puis 15 min) | **429 COMPTE_BLOQUE**, message avec le délai réel + en-tête `Retry-After` ; levé par « mot de passe oublié » |
 | Trop d'échecs depuis la même IP (30 / 15 min, réussites non comptées) | **429 TROP_DE_REQUETES**, délai restant dans le message + `Retry-After` |
@@ -84,6 +82,7 @@ Variables d'exploitation : `RELANCES_TAILLE_LOT` (défaut 1000) — les relances
 | POST | `/api/v1/auth/verifier-code` |
 | POST | `/api/v1/auth/reinitialiser-mot-de-passe` |
 | POST | `/api/v1/auth/locataire/activation` |
+| POST | `/api/v1/auth/code-acces/verifier` (super admin connecté) |
 
 ## Référentiels — public
 
@@ -464,6 +463,7 @@ Variables d'exploitation : `RELANCES_TAILLE_LOT` (défaut 1000) — les relances
 | GET | `/api/v1/admin/utilisateurs/:id` |
 | POST | `/api/v1/admin/utilisateurs/:id/desactiver` |
 | POST | `/api/v1/admin/utilisateurs/:id/activer` |
+| PUT | `/api/v1/admin/utilisateurs/:id/code-acces` |
 | POST | `/api/v1/admin/utilisateurs/:id/deverrouiller` |
 | GET | `/api/v1/admin/parametres` |
 | PUT | `/api/v1/admin/parametres/:cle` |

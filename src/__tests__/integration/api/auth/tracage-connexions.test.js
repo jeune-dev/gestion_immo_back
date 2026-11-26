@@ -60,9 +60,9 @@ describe('Traçage des connexions', () => {
     expect((await derniere('compte.connexion_echec', p.user.id)).details.motif).toBe('compte_verrouille');
   });
 
-  test('double authentification : l’étape « mot de passe valide » est tracée, la connexion complète aussi', async () => {
+  test('super admin : connexion directe, sans étape de double authentification', async () => {
     const admin = await superAdmin();
-    expect((await derniere('compte.connexion_mot_de_passe_valide', admin.user.id)).details.motif).toBe('double_authentification_requise');
-    expect(await derniere('compte.connexion_double_authentification', admin.user.id)).toBeDefined();
+    expect(await derniere('compte.connexion', admin.user.id)).toBeDefined();
+    expect(await derniere('compte.connexion_mot_de_passe_valide', admin.user.id)).toBeFalsy();
   });
 });

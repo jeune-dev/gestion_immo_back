@@ -7,7 +7,6 @@ const { ok } = require('../../../utils/response.js');
 const { cookieRefresh } = require('../../../config/security.js');
 const CompteService = require('../service/compte.service.js');
 const sessions = require('../../auth/service/session.service.js');
-const MfaService = require('../../auth/service/mfa.service.js');
 
 const meta = (req) => ({ ip: req.ip, userAgent: req.headers['user-agent'] });
 
@@ -53,27 +52,6 @@ function donneesSession(req, res, session, supplement = {}) {
 exports.changerMotDePasse = asyncHandler(async (req, res) => {
   const session = await CompteService.changerMotDePasse(req.user, req.body, meta(req));
   return ok(res, donneesSession(req, res, session), 'Mot de passe modifié. Les autres appareils ont été déconnectés.');
-});
-
-exports.initialiserMfa = asyncHandler(async (req, res) => {
-  const resultat = await MfaService.initialiser(req.user, req.body);
-  return ok(res, resultat, "Scannez le QR code dans votre application d'authentification, puis confirmez avec un code.");
-});
-
-exports.activerMfa = asyncHandler(async (req, res) => {
-  const { codes_secours: codes, session } = await MfaService.activer(req.user, req.body, meta(req));
-  return ok(res, donneesSession(req, res, session, { codes_secours: codes }),
-    'Double authentification activée. Conservez vos codes de secours : ils ne seront plus affichés.');
-});
-
-exports.desactiverMfa = asyncHandler(async (req, res) => {
-  await MfaService.desactiver(req.user, req.body);
-  return ok(res, null, 'Double authentification désactivée');
-});
-
-exports.codesSecoursMfa = asyncHandler(async (req, res) => {
-  const resultat = await MfaService.regenererCodesSecours(req.user, req.body);
-  return ok(res, resultat, 'Nouveaux codes de secours générés ; les anciens ne sont plus valables.');
 });
 
 exports.sessions = asyncHandler(async (req, res) => {

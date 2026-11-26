@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  api, bearer, MOT_DE_PASSE, nouveauProprietaire, superAdmin, codeTotp, proprietaireEtLocataire, emailUnique, compter, fermer, sequelize, pngTest,
+  api, bearer, MOT_DE_PASSE, nouveauProprietaire, superAdmin, proprietaireEtLocataire, emailUnique, compter, fermer, sequelize, pngTest,
 } = require('../../../setup/helpers.js');
 const email = require('../../../../infrastructure/email.service.js');
 
@@ -275,17 +275,9 @@ describe('CORRECTIF mot de passe provisoire (must_change_password)', () => {
 
     const change = await changerMdp(h, provisoire, 'Zt7$pWq4!nBv');
     expect(change.status).toBe(200);
-    // Mot de passe changé, mais double authentification pas encore configurée :
-    // la console reste fermée (constat E1), seule la configuration est ouverte.
+    // Mot de passe changé : l'administration s'ouvre (plus de double authentification).
     const h2 = bearer(change.body.data.access_token);
-    const sansMfa = await api().get('/api/v1/admin/dashboard').set(h2);
-    expect(sansMfa.status).toBe(403);
-    expect(sansMfa.body.error.code).toBe('MFA_REQUISE');
-    const init = await api().post(`${COMPTE}/mfa/initialiser`).set(h2).send({ current_password: 'Zt7$pWq4!nBv' });
-    expect(init.status).toBe(200);
-    const active = await api().post(`${COMPTE}/mfa/activer`).set(h2).send({ code: codeTotp(init.body.data.secret) });
-    expect(active.status).toBe(200);
-    expect((await api().get('/api/v1/admin/dashboard').set(bearer(active.body.data.access_token))).status).toBe(200);
+    expect((await api().get('/api/v1/admin/dashboard').set(h2)).status).toBe(200);
   });
 
   test('déconnexion possible avec un mot de passe provisoire', async () => {

@@ -93,4 +93,23 @@ const PERMISSIONS_PAR_ROLE = Object.freeze({
   locataire: LOCATAIRE,
 });
 
-module.exports = { P, TOUTES, PERMISSIONS_PAR_ROLE };
+/**
+ * Les permissions qu'on peut accorder une à une à un super admin (back-office
+ * KODAFRIK : cases cochées à la création d'un administrateur).
+ */
+const PERMISSIONS_ADMIN = Object.freeze(SUPER_ADMIN);
+
+/**
+ * Permissions effectives : celles du rôle, restreintes pour un super admin
+ * dont `admin_permissions` est un tableau (NULL = toutes).
+ * @param {Set<string>} duRole
+ * @param {{role_code: string, admin_permissions?: string[]|null}} user
+ * @returns {Set<string>}
+ */
+function permissionsEffectives(duRole, user) {
+  if (user?.role_code !== 'super_admin' || !Array.isArray(user.admin_permissions)) return duRole;
+  const accordees = new Set(user.admin_permissions);
+  return new Set([...duRole].filter((p) => !p.startsWith('admin.') || accordees.has(p)));
+}
+
+module.exports = { P, TOUTES, PERMISSIONS_PAR_ROLE, PERMISSIONS_ADMIN, permissionsEffectives };

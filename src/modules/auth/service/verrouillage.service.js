@@ -7,9 +7,8 @@ const { journaliser } = require('../../audit/service/audit.service.js');
 const { alerter, TYPES } = require('../../../infrastructure/alertes.service.js');
 
 /**
- * Verrouillage progressif d'un compte après des essais incorrects (mot de
- * passe ou code de double authentification), commun à auth.service et
- * mfa.service.
+ * Verrouillage progressif d'un compte après des mots de passe incorrects
+ * (auth.service).
  *
  * Toutes les `maxTentatives` erreurs, le compte est bloqué pour le palier
  * suivant (1 min, 5 min, 15 min par défaut ; le dernier palier se répète).

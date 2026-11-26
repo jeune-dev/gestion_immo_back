@@ -8,6 +8,10 @@ const {
   STATUT_INCIDENT, CATEGORIE_INCIDENT, GROUPE_CAISSE_SORTIE, PERIODE_FACTURATION, STATUT_PLAN, FONCTIONNALITE,
   TYPE_BAIL, STATUT_MODELE_BAIL,
 } = require('../../../config/enums.js');
+const { PERMISSIONS_ADMIN } = require('../../../config/permissions.js');
+
+/** Permissions `admin.*` accordées à un super admin ; null = toutes. */
+const permissionsAdmin = Joi.array().items(Joi.string().valid(...PERMISSIONS_ADMIN)).unique().max(PERMISSIONS_ADMIN.length).allow(null);
 
 /**
  * Schémas Joi de l'administration. Toute entrée est bornée ; les statuts
@@ -100,6 +104,8 @@ const utilisateursSchema = Joi.object({
   tri: tri(['created_at', 'last_name', 'last_login_at']),
 });
 
+const codeAcces = Joi.string().pattern(/^\d{4}$/).messages({ 'string.pattern.base': "Le code d'accès fait exactement quatre chiffres." });
+
 const superAdminSchema = Joi.object({
   first_name: nom.required(),
   last_name: nom.required(),
@@ -109,7 +115,15 @@ const superAdminSchema = Joi.object({
   password: Joi.string().max(128).required(),
   // Mot de passe de l'administrateur qui crée le compte (ré-authentification).
   current_password: Joi.string().max(128).required(),
+  // Ce que le compte peut faire (back-office KODAFRIK) ; absent ou null = tout.
+  permissions: permissionsAdmin,
+  // Code d'accès à quatre chiffres (portail KODAFRIK), exigé pour ouvrir /admin.
+  code_acces: codeAcces,
 });
+
+const codeAccesAdminSchema = Joi.object({ code_acces: codeAcces.required() });
+
+const permissionsAdminSchema = Joi.object({ permissions: permissionsAdmin.required() });
 
 const reinitialisationAccesSchema = Joi.object({
   current_password: Joi.string().max(128).required(),
@@ -214,7 +228,7 @@ const cleParametre = Joi.object({ cle: Joi.string().trim().max(80).required() })
 module.exports = {
   ownerIdParam, proprietairesSchema, motifSchema, motifFacultatifSchema, locatairesSchema, immeublesSchema,
   signalementsSchema, statistiquesSignalementsSchema, abonnementsSchema, activationSchema, paiementsSchema,
-  statistiquesLoyersSchema, utilisateursSchema, superAdminSchema, reinitialisationAccesSchema, diffusionSchema,
+  statistiquesLoyersSchema, utilisateursSchema, superAdminSchema, permissionsAdminSchema, codeAccesAdminSchema, reinitialisationAccesSchema, diffusionSchema,
   categorieCreationSchema, categorieModificationSchema, categoriesSchema,
   planCreationSchema, planModificationSchema, plansSchema,
   modeleBailCreationSchema, modeleBailModificationSchema, modelesBailSchema, modeleWhatsappSchema,

@@ -36,6 +36,8 @@ const User = sequelize.define('User', {
     },
   },
   totp_enabled_at: { type: DataTypes.DATE },
+  // Permissions `admin.*` d'un super admin ; NULL = toutes (migration 20261126000020).
+  admin_permissions: { type: DataTypes.JSONB },
   totp_last_step: { type: DataTypes.BIGINT },
   mfa_recovery_codes: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
 }, {

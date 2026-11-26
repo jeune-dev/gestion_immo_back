@@ -2,7 +2,7 @@
 
 const router = require('express').Router();
 const auth = require('./middlewares/auth.middleware.js');
-const { requireProprietaire, requireLocataire, requireRole } = require('./middlewares/acces.middleware.js');
+const { requireProprietaire, requireLocataire, requireRole, exigerCodeAcces } = require('./middlewares/acces.middleware.js');
 const { exigerAbonnementPourEcrire } = require('./middlewares/abonnement.middleware.js');
 const rafraichirTableauDeBord = require('./middlewares/tableauDeBord.middleware.js');
 const { authenticatedRateLimit, adminRateLimit, webhookRateLimit } = require('./middlewares/rateLimit.middleware.js');
@@ -17,12 +17,13 @@ const { authenticatedRateLimit, adminRateLimit, webhookRateLimit } = require('./
  *   espace propriétaire : auth → limite par utilisateur → propriétaire actif
  *                         → abonnement (écritures) → permission (dans le module)
  *   espace locataire    : auth → limite → locataire (fiches rattachées)
- *   super admin         : auth → limite admin → rôle super_admin → permission
+ *   super admin         : auth → limite admin → rôle super_admin → code d'accès → permission
  */
 
 const espaceProprietaire = [auth, authenticatedRateLimit, requireProprietaire, exigerAbonnementPourEcrire, rafraichirTableauDeBord];
 const espaceLocataire = [auth, authenticatedRateLimit, requireLocataire];
-const espaceAdmin = [auth, adminRateLimit, requireRole('super_admin')];
+// Super admin : le code d'accès à quatre chiffres (portail KODAFRIK) est exigé en plus du mot de passe.
+const espaceAdmin = [auth, adminRateLimit, requireRole('super_admin'), exigerCodeAcces];
 const authentifie = [auth, authenticatedRateLimit];
 
 const m = (chemin) => require(`./modules/${chemin}`);

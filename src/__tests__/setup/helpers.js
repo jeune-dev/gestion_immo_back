@@ -10,7 +10,6 @@ const request = require('supertest');
 const app = require('../../app.js');
 const sequelize = require('../../config/db.js');
 const bcrypt = require('../../utils/motDePasse.js');
-const totp = require('../../utils/totp.js');
 const { encrypt } = require('../../utils/cryptoField.js');
 const arrierePlan = require('../../utils/arrierePlan.js');
 const {
@@ -158,34 +157,37 @@ async function nouveauProprietaire(surcharges = {}) {
   };
 }
 
-/** Crée un super admin en base et le connecte. */
+/** Code d'accès à quatre chiffres des super admins de test. */
+const CODE_ACCES = '0427';
+
 /**
- * Super admin connecté par le VRAI parcours : mot de passe, puis code TOTP
- * (double authentification obligatoire pour ce rôle). `mfa: false` crée un
- * super admin qui ne l'a pas encore configurée (accès limité à la configuration).
+ * Crée un super admin en base et le connecte : mot de passe, puis code
+ * d'accès (exigé par /admin). `{ code: false }` : connecté au seul mot de
+ * passe, comme avant le portail.
  */
-async function superAdmin({ mfa = true } = {}) {
+async function superAdmin({ code = true } = {}) {
   const email = emailUnique('admin');
-  const secret = totp.genererSecret();
-  await sequelize.query(
-    `INSERT INTO users (role_code, first_name, last_name, email, password_hash, totp_secret, totp_enabled_at)
-     VALUES ('super_admin', 'Admin', 'Test', :email, :h, :secret, ${mfa ? 'now()' : 'NULL'})`,
-    { replacements: { email, h: await bcrypt.hash(MOT_DE_PASSE, 4), secret: mfa ? encrypt(secret) : null } }
+  const [[{ id }]] = await sequelize.query(
+    `INSERT INTO users (role_code, first_name, last_name, email, password_hash)
+     VALUES ('super_admin', 'Admin', 'Test', :email, :h) RETURNING id`,
+    { replacements: { email, h: await bcrypt.hash(MOT_DE_PASSE, 4) } }
   );
-  let res = await api().post('/api/v1/auth/connexion').send({ identifiant: email, password: MOT_DE_PASSE });
-  if (mfa) {
-    if (!res.body.data?.mfa_token) throw new Error(`Connexion super admin : ${res.status} ${JSON.stringify(res.body)}`);
-    res = await api().post('/api/v1/auth/mfa').send({ mfa_token: res.body.data.mfa_token, code: totp.codePourPas(secret, totp.pasCourant()) });
-  }
+  await sequelize.query('INSERT INTO code_acces_admin (user_id, code_hash) VALUES (:id, :h)', {
+    replacements: { id, h: await bcrypt.hash(CODE_ACCES, 4) },
+  });
+  const res = await api().post('/api/v1/auth/connexion').send({ identifiant: email, password: MOT_DE_PASSE });
   if (!res.body.data?.access_token) throw new Error(`Connexion super admin : ${res.status} ${JSON.stringify(res.body)}`);
+  let token = res.body.data.access_token;
+  if (code) {
+    const v = await api().post('/api/v1/auth/code-acces/verifier').set(bearer(token)).send({ code: CODE_ACCES });
+    if (!v.body.data?.access_token) throw new Error(`Code d'accès super admin : ${v.status} ${JSON.stringify(v.body)}`);
+    token = v.body.data.access_token;
+  }
   return {
-    token: res.body.data.access_token, h: bearer(res.body.data.access_token), user: res.body.data.user,
-    refreshToken: res.body.data.refresh_token, email, secret: mfa ? secret : null,
+    token, h: bearer(token), user: res.body.data.user,
+    refreshToken: res.body.data.refresh_token, email, code: CODE_ACCES,
   };
 }
-
-/** Code TOTP valide pour un secret (décalage en pas de 30 s : 1 = code suivant, anti-rejeu). */
-const codeTotp = (secret, decalage = 0) => totp.codePourPas(secret, totp.pasCourant() + decalage);
 
 async function creerImmeuble(proprio, surcharges = {}) {
   const res = await api().post('/api/v1/immeubles').set(proprio.h)
@@ -305,7 +307,7 @@ async function fermer() {
 
 module.exports = {
   api, apiBrute, bearer, MOT_DE_PASSE, telephoneUnique, emailUnique,
-  nouveauProprietaire, superAdmin, codeTotp, creerImmeuble, creerAppartement, creerLocataire,
+  nouveauProprietaire, superAdmin, creerImmeuble, creerAppartement, creerLocataire,
   desactiverEdlObligatoire, bailActif, activerLocataire, fermer, sequelize, reperes, bailRelatif,
   attendreArrierePlan: arrierePlan.attendre,
   echeancesDu, payerEspeces, pngTest, proprietaireEtLocataire, expirerAbonnement, publierModeleBail, compter,

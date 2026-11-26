@@ -15,6 +15,18 @@ const requireRole = (...roles) => (req, res, next) => {
   return next(new ForbiddenError("Vous n'avez pas les droits nécessaires pour cette action.", 'ROLE_INSUFFISANT'));
 };
 
+/**
+ * Le code d'accès à quatre chiffres (portail KODAFRIK) doit avoir été vérifié
+ * pour cette session : sans lui, le mot de passe seul n'ouvre pas /admin.
+ * À placer après `auth` et `requireRole('super_admin')`.
+ */
+const exigerCodeAcces = (req, res, next) => {
+  if (!req.user) return next(new UnauthorizedError());
+  const { obligatoire } = require('../config/codeAcces.js');
+  if (!obligatoire() || req.codeAccesVerifie === true) return next();
+  return next(new ForbiddenError("Saisissez votre code d'accès sur le portail KODAFRIK pour ouvrir l'administration.", 'CODE_ACCES_REQUIS'));
+};
+
 /** Le compte doit détenir la permission (RBAC fin, `roles.permissions`). */
 const requirePermission = (permission) => (req, res, next) => {
   if (!req.user) return next(new UnauthorizedError());
@@ -63,4 +75,4 @@ const requireLocataire = async (req, res, next) => {
   }
 };
 
-module.exports = { requireRole, requirePermission, requireProprietaire, requireLocataire };
+module.exports = { requireRole, requirePermission, requireProprietaire, requireLocataire, exigerCodeAcces };

@@ -5,6 +5,7 @@ const { jwtConfig, cleHmac } = require('../config/security.js');
 const { User, OwnerMember, Owner } = require('../models/index.js');
 const { UnauthorizedError, ForbiddenError } = require('../errors/AppError.js');
 const { permissionsDuRole } = require('../modules/auth/service/roles.service.js');
+const { permissionsEffectives } = require('../config/permissions.js');
 
 /**
  * Authentification par jeton d'accès (Bearer) — reprise de Widjila.
@@ -40,27 +41,9 @@ const ROUTES_AVANT_CHANGEMENT = new Set([
   'POST /api/v1/auth/deconnexion',
 ]);
 
-/**
- * Super admin sans double authentification (constat E1) : seules la lecture
- * du profil, la configuration TOTP, le changement de mot de passe et la
- * déconnexion sont ouverts. Le reste de l'administration est fermé.
- */
-const ROUTES_AVANT_MFA = new Set([
-  ...ROUTES_AVANT_CHANGEMENT,
-  'POST /api/v1/compte/mfa/initialiser',
-  'POST /api/v1/compte/mfa/activer',
-]);
-
 const cleRoute = (req) => `${req.method} ${String(req.originalUrl || '').split('?')[0].replace(/\/+$/, '')}`;
 const routeOuverteAvantChangement = (req) => ROUTES_AVANT_CHANGEMENT.has(cleRoute(req));
-const routeOuverteAvantMfa = (req) => ROUTES_AVANT_MFA.has(cleRoute(req));
 
-/**
- * DÉVELOPPEMENT LOCAL UNIQUEMENT : MFA_DESACTIVEE_DEV=true lève l'obligation de
- * double authentification du super admin. Ignoré quand NODE_ENV=production.
- */
-const mfaSuperAdminExigee = () =>
-  !(process.env.NODE_ENV !== 'production' && process.env.MFA_DESACTIVEE_DEV === 'true');
 
 const auth = async (req, res, next) => {
   try {
@@ -75,7 +58,7 @@ const auth = async (req, res, next) => {
     }
 
     const utilisateur = await User.findByPk(decode.sub, {
-      attributes: ['id', 'role_code', 'first_name', 'last_name', 'email', 'phone', 'status', 'token_version', 'must_change_password', 'language', 'totp_enabled_at'],
+      attributes: ['id', 'role_code', 'first_name', 'last_name', 'email', 'phone', 'status', 'token_version', 'must_change_password', 'language', 'admin_permissions'],
       include: [{
         model: OwnerMember,
         as: 'memberships',
@@ -104,17 +87,10 @@ const auth = async (req, res, next) => {
       ));
     }
 
-    // Double authentification OBLIGATOIRE pour le super admin : tant qu'elle
-    // n'est pas configurée, un mot de passe seul n'ouvre pas l'administration.
-    if (mfaSuperAdminExigee() && utilisateur.role_code === 'super_admin' && !utilisateur.totp_enabled_at && !routeOuverteAvantMfa(req)) {
-      return next(new ForbiddenError(
-        'Configurez la double authentification avant d’accéder à l’administration.',
-        'MFA_REQUISE'
-      ));
-    }
-
     req.user = utilisateur;
     req.sessionId = decode.sid || null;
+    // Code d'accès vérifié pour cette session (super admin) : voir exigerCodeAcces.
+    req.codeAccesVerifie = decode.ca === true;
 
     // Espace propriétaire : en V1, un compte propriétaire a exactement une
     // appartenance. Les permissions viennent du rôle DANS l'espace (§ 49).
@@ -124,7 +100,8 @@ const auth = async (req, res, next) => {
       req.ownerStatus = appartenance.owner?.status;
       req.permissions = await permissionsDuRole(appartenance.role_code);
     } else {
-      req.permissions = await permissionsDuRole(utilisateur.role_code);
+      // Super admin aux permissions choisies (back-office KODAFRIK) : sous-ensemble du rôle.
+      req.permissions = permissionsEffectives(await permissionsDuRole(utilisateur.role_code), utilisateur);
     }
     return next();
   } catch (err) {

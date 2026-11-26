@@ -13,7 +13,6 @@ const { aujourdhui, ajouterJours } = require('../../../utils/dates.js');
 const { ConflictError, UnauthorizedError, ForbiddenError, BadRequestError, ValidationError } = require('../../../errors/AppError.js');
 const sessions = require('./session.service.js');
 const invitations = require('./invitation.service.js');
-const mfa = require('./mfa.service.js');
 const verificationEmail = require('./verificationEmail.service.js');
 const verrouillage = require('./verrouillage.service.js');
 const parametres = require('../../parametres/service/parametres.service.js');
@@ -189,15 +188,8 @@ async function connecter({ identifiant, password }, meta) {
   // Statut annoncé seulement à qui connaît le mot de passe (anti-énumération).
   if (user.status !== 'actif') throw new ForbiddenError('Votre compte est désactivé. Contactez le support.', 'COMPTE_INACTIF');
 
-  // Double authentification active : le mot de passe seul n'ouvre PAS de
-  // session, seulement l'étape « code » (POST /auth/mfa). Le compteur d'échecs
-  // n'est PAS remis à zéro ici : sinon, qui connaît le mot de passe pourrait
-  // alterner connexion et codes faux sans jamais être verrouillé.
-  if (mfa.mfaActive(user)) {
-    await tracerConnexion('compte.connexion_mot_de_passe_valide', { user, identifiant, motif: 'double_authentification_requise' });
-    return { user, mfa: { jeton: mfa.emettreJetonMfa(user), expiresIn: mfa.DUREE_JETON_MFA } };
-  }
-
+  // Pas de double authentification : le mot de passe ouvre la session (le
+  // back-office KODAFRIK protège l'entrée par son code à quatre chiffres).
   await verrouillage.reinitialiser(user);
   const session = await sessions.ouvrirSession(user, meta);
   await tracerConnexion('compte.connexion', { user, identifiant });

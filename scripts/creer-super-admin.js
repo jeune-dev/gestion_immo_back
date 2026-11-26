@@ -109,8 +109,7 @@ if (require.main === module) {
     .then(async ({ adresse, cree }) => {
       console.log(cree
         ? `Super admin créé : ${adresse}`
-        : `Super admin ${adresse} : nouveau mot de passe enregistré, sessions fermées, double authentification à reconfigurer.`);
-      console.log('À la première ouverture du back-office, configurez la double authentification (obligatoire).');
+        : `Super admin ${adresse} : nouveau mot de passe enregistré, sessions fermées.`);
       await sequelize.close();
       process.exit(0);
     })

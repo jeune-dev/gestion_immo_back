@@ -93,20 +93,14 @@ const activationSchema = Joi.object({
   .with('code', 'phone')
   .messages({ 'object.xor': "Fournissez soit le lien d'activation, soit le code d'activation" });
 
-// Double authentification — seconde étape de la connexion.
-const codeTotp = Joi.string().trim().pattern(/^\d{6}$/).messages({ 'string.pattern.base': 'Le code de vérification contient 6 chiffres' });
-const codeSecours = Joi.string().trim().max(20);
-
-const mfaSchema = Joi.object({
-  mfa_token: Joi.string().max(2048).required(),
-  code: codeTotp,
-  code_secours: codeSecours,
-  device_name: Joi.string().trim().max(120).allow('', null),
-  platform: Joi.string().valid('android', 'ios', 'web').allow(null),
-}).xor('code', 'code_secours').messages({ 'object.xor': 'Fournissez soit le code de vérification, soit un code de secours' });
+// Code d'accès à quatre chiffres du super admin (portail KODAFRIK).
+const codeAccesSchema = Joi.object({
+  code: Joi.string().pattern(/^\d{4}$/).required().messages({ 'string.pattern.base': "Le code d'accès fait exactement quatre chiffres." }),
+});
 
 module.exports = {
+  codeAccesSchema,
   inscriptionSchema, connexionSchema, refreshSchema, deconnexionSchema,
   inscriptionCodeSchema, inscriptionVerificationSchema,
-  motDePasseOublieSchema, verificationCodeSchema, reinitialisationSchema, activationSchema, mfaSchema, codeTotp, codeSecours,
+  motDePasseOublieSchema, verificationCodeSchema, reinitialisationSchema, activationSchema,
 };

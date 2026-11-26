@@ -21,6 +21,8 @@ const RefreshToken = sequelize.define('RefreshToken', {
   last_used_at: { type: DataTypes.DATE },
   // Successeur émis par la rotation : permet de reconnaître une réponse perdue.
   replaced_by_id: { type: DataTypes.UUID },
+  // Code d'accès (super admin) vérifié pour cette session — reporté de rotation en rotation.
+  code_acces_verifie_le: { type: DataTypes.DATE },
 }, {
   tableName: 'refresh_tokens',
   createdAt: 'created_at',

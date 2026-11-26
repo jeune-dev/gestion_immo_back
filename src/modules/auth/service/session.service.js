@@ -54,9 +54,15 @@ const dureeMaxSessionMs = (user) => (user?.role_code === 'super_admin'
  */
 const sessionIdDe = (refreshToken) => hashToken(refreshToken).slice(0, 32);
 
-function genererAccessToken(user, refreshToken = null) {
+/**
+ * `ca` : le code d'accès du super admin a été vérifié pour cette session —
+ * sans lui, /admin répond 403 CODE_ACCES_REQUIS. `sid` peut être donné
+ * directement (vérification du code, qui n'a pas le refresh token).
+ */
+function genererAccessToken(user, refreshToken = null, { codeAcces = false, sid = null } = {}) {
+  const session = refreshToken ? sessionIdDe(refreshToken) : sid;
   return jwt.sign(
-    { sub: user.id, role: user.role_code, tv: user.token_version, typ: 'access', ...(refreshToken ? { sid: sessionIdDe(refreshToken) } : {}) },
+    { sub: user.id, role: user.role_code, tv: user.token_version, typ: 'access', ...(session ? { sid: session } : {}), ...(codeAcces ? { ca: true } : {}) },
     cleHmac(jwtConfig.secret),
     { expiresIn: jwtConfig.expiresIn, algorithm: jwtConfig.algorithme }
   );
@@ -129,7 +135,9 @@ async function controlerSession(stocke) {
 /** Émet le jeton suivant de la session et le relie à celui qu'il remplace. */
 async function emettreSuccesseur(stocke, { user, debutSession }, meta, t) {
   const nouveau = genererRefreshToken(user);
-  const accessToken = genererAccessToken(user, nouveau);
+  // Le code d'accès vérifié suit la session d'une rotation à l'autre.
+  const codeAcces = stocke.code_acces_verifie_le || null;
+  const accessToken = genererAccessToken(user, nouveau, { codeAcces: Boolean(codeAcces) });
   const successeur = await RefreshToken.create({
     user_id: user.id,
     token_hash: hashToken(nouveau),
@@ -141,6 +149,7 @@ async function emettreSuccesseur(stocke, { user, debutSession }, meta, t) {
     last_used_at: new Date(),
     // La session garde sa date de début : la durée maximale est absolue.
     session_started_at: debutSession,
+    code_acces_verifie_le: codeAcces,
   }, { transaction: t });
   await RefreshToken.update({ replaced_by_id: successeur.id }, { where: { id: stocke.id }, transaction: t });
   return { ok: true, accessToken, refreshToken: nouveau, user, expiresIn: jwtConfig.expiresIn };

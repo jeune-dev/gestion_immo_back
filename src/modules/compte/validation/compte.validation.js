@@ -1,7 +1,6 @@
 'use strict';
 
 const { Joi, email, motDePasse, nom, uuid } = require('../../../validations/common.js');
-const { codeTotp, codeSecours } = require('../../auth/validation/auth.validation.js');
 
 const profilSchema = Joi.object({
   first_name: nom,
@@ -31,15 +30,6 @@ const suppressionAppareilSchema = Joi.object({
   token: Joi.string().trim().min(10).max(512).required(),
 });
 
-// Double authentification (TOTP).
-const motDePasseActuel = Joi.string().max(128).required();
-const mfaInitialisationSchema = Joi.object({ current_password: motDePasseActuel });
-const mfaActivationSchema = Joi.object({ code: codeTotp.required() });
-const mfaDesactivationSchema = Joi.object({ current_password: motDePasseActuel, code: codeTotp, code_secours: codeSecours })
-  .xor('code', 'code_secours');
-const mfaCodesSecoursSchema = Joi.object({ current_password: motDePasseActuel, code: codeTotp.required() });
-
 module.exports = {
   profilSchema, motDePasseSchema, sessionIdSchema, appareilSchema, suppressionAppareilSchema,
-  mfaInitialisationSchema, mfaActivationSchema, mfaDesactivationSchema, mfaCodesSecoursSchema,
 };
